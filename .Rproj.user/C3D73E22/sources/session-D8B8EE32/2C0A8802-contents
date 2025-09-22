@@ -3,7 +3,7 @@
 
 library(readxl)
 library(dplyr)
-
+library(sf)
 
 pv_data <- "data/Global-Solar-Power-Tracker-February-2025.xlsx"
 
@@ -26,3 +26,6 @@ cat("Total solar PV plants in Spain:", nrow(pv_spain), "\n")
 
 # Save filtered dataset to CSV
 write.csv(pv_spain, "data/pv_spain.csv", row.names = FALSE)
+
+# convert to spatial using sf
+
