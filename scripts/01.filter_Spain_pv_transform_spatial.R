@@ -4,6 +4,7 @@
 library(readxl)
 library(dplyr)
 library(sf)
+library(mapview)
 
 pv_data <- "data/Global-Solar-Power-Tracker-February-2025.xlsx"
 
@@ -34,7 +35,11 @@ pv_spain_sf <- st_as_sf(
   crs = 4326
 )
 
+mapview(pv_spain_sf)
+
 #Save spatial as shapefile
 st_write(pv_spain_sf, "data/pv_spain.shp") 
 #Save spatial as geopckage
 st_write(pv_spain_sf, "data/pv_spain.gpkg")
+
+
