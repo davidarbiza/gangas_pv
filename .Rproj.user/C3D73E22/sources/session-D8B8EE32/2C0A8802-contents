@@ -1,5 +1,5 @@
 
-# Filter global solar PV dataset to keep only installations in Spain
+# Filter global solar PV dataset to keep only installations in Spain and transform data to spatial data
 
 library(readxl)
 library(dplyr)
@@ -28,4 +28,13 @@ cat("Total solar PV plants in Spain:", nrow(pv_spain), "\n")
 write.csv(pv_spain, "data/pv_spain.csv", row.names = FALSE)
 
 # convert to spatial using sf
+pv_spain_sf <- st_as_sf(
+  pv_spain,
+  coords = c("Longitude", "Latitude"),
+  crs = 4326
+)
 
+#Save spatial as shapefile
+st_write(pv_spain_sf, "data/pv_spain.shp") 
+#Save spatial as geopckage
+st_write(pv_spain_sf, "data/pv_spain.gpkg")
