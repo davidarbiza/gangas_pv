@@ -1,52 +1,67 @@
-
-# Join pv_spain.gpkg (obteined from Global PV Excell) and allsolar_cut.shp (Polygon PV Shapefile) 
-
+# Join pv_spain.gpkg (obteined from Global PV Excell) and allsolar_cut.shp (Polygon PV Shapefile)
 library(sf)
 library(dplyr)
 library(janitor)
 
+# Read PV points (Excel/Global PV data) and PV polygons (allsolar)
 pv_spain_excell <- st_read("data/pv_spain.gpkg", quiet = TRUE)
-allsolar <- st_read("data/allsolar_cut.shp", quiet = TRUE)
+allsolar <- st_read("data/allsolar_cut_diss.shp", quiet = TRUE)
 
 # Assure same CRS
 allsolar <- st_transform(allsolar, st_crs(pv_spain_excell))
 
-#Create id por each obs.
-pv_spain_excell <- pv_spain_excell %>%
-  mutate(point_id = row_number())
+# Filter only operating PV plants
+pv_spain_excell <- pv_spain_excell %>% filter(Status == "operating")
 
-#Buffer
-pv_spain_excell <- pv_spain_excell %>%
-  mutate(buffer_radius = sqrt(`Capacity..MW.`) * 50) %>%
-  st_buffer(dist = .$buffer_radius)
+# Create unique IDs
+pv_spain_excell <- pv_spain_excell %>% mutate(point_id = row_number())
+allsolar <- allsolar %>% mutate(poly_id = row_number())
 
-# Spacial Join
-joined <- st_join(allsolar, pv_spain_excell, join = st_intersects)
+# Fix invalid geometries
+allsolar <- st_make_valid(allsolar)
+pv_spain_excell <- st_make_valid(pv_spain_excell)
 
-# Clean columns names
-joined_clean <- joined %>%
-  clean_names()
+# Centroids of polygons
+poly_centroids <- st_centroid(allsolar)
 
-# Select relevant columns
-cols_to_keep <- c("point_id", "project_name", "start_year", "capacity_mw")
-joined_final <- joined_clean %>%
-  select(all_of(cols_to_keep), geometry)
+# Find nearest PV point for each polygon
+nearest_idx <- st_nearest_feature(poly_centroids, pv_spain_excell)
 
+# Create assignment table
+assign_nearest <- tibble(
+  poly_id = allsolar$poly_id,
+  nearest_idx = nearest_idx
+) %>% mutate(
+  point_id = pv_spain_excell$point_id[nearest_idx],
+  project_name = pv_spain_excell$Project.Name[nearest_idx],
+  start_year = pv_spain_excell$`Start.year`[nearest_idx],
+  capacity_mw = pv_spain_excell$`Capacity..MW.`[nearest_idx]
+)
+
+# Join assignment to polygons
+allsolar_assigned_nearest <- allsolar %>%
+  left_join(assign_nearest %>% select(-nearest_idx), by = "poly_id")
+
+# Compute distance from polygon centroid to assigned PV point
+allsolar_assigned_nearest <- allsolar_assigned_nearest %>%
+  mutate(distance_m = as.numeric(st_distance(
+    st_transform(st_centroid(geometry), 3857),
+    st_transform(pv_spain_excell[match(point_id, pv_spain_excell$point_id), ], 3857),
+    by_element = TRUE
+  )))
+
+# QC: summary of distances
+summary(allsolar_assigned_nearest$distance_m)
+sum(!is.na(allsolar_assigned_nearest$point_id))
+
+# Outliers: polygons further than 5 km from assigned point
+outliers <- allsolar_assigned_nearest %>%
+  filter(distance_m > 5000)
+
+nrow(outliers)
+
+# Map outliers and PV points
+mapview(outliers, zcol = "distance_m") + mapview(pv_spain_excell)
 
 # Save results
-st_write(joined_final, "data/allsolar_Spain_joined.gpkg", delete_layer = TRUE)
-st_write(joined_final, "data/allsolar_Spain_joined.shp", delete_layer = TRUE)
-
-#Check if the layer works
-joined <- st_read("data/allsolar_Spain_joined.gpkg", quiet = TRUE)
-st_geometry_type(joined) #Geometry
-st_crs(joined) #CRS
-sum(!is.na(joined_final$project_name)) #Polygons with data
-
-# Check overlaps
-poligonos_solapados <- joined_final %>%
-  group_by(geometry) %>% 
-  summarise(n_points = n_distinct(point_id)) %>%
-  filter(n_points > 1)
-nrow(poligonos_solapados)
-
+st_write(allsolar_assigned_nearest, "data/allsolar_assigned_nearest.gpkg", delete_layer = TRUE)
