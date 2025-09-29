@@ -61,7 +61,7 @@ allsolar_assigned_nearest <- allsolar_assigned_nearest %>%
   mutate(
     max_area_ha = capacity_mw * 5,    # 5 ha/MW
     max_allow_m = sqrt((max_area_ha * 10000) / pi)*  # max. radius
-      ifelse(location_accuracy == "approximate", 1.15, 1), # +15% if location is aprproximate
+      ifelse(location_accuracy == "approximate", 1.15, 1), # +15% if location is "aprproximate"
     assigned_valid = distance_m <= max_allow_m
   )
 
@@ -79,6 +79,10 @@ mapview(pv_spain_excell, col.region = "steelblue", cex = 3, alpha = 0.5, legend 
 poligonos_invalidos <- allsolar_assigned_nearest %>% filter(!assigned_valid)
 mapview(poligonos_invalidos,zcol = "distance_m",col.regions = viridis(100), legend = TRUE) +
   mapview(pv_spain_excell, col.region = "red", cex = 5, alpha = 0.7, legend = FALSE)
+
+mapview(allsolar_assigned_nearest,zcol = "assigned_valid") +
+  mapview(pv_spain_excell, col.region = "red", cex = 5, alpha = 0.7, legend = FALSE)
+
 
 # Save
 st_write(allsolar_assigned_nearest, "data/allsolar_assigned_nearest.gpkg", delete_layer = TRUE)
