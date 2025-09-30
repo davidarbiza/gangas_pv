@@ -41,7 +41,16 @@ mapview(solar_plants)
 PV <- read_sf("data/allsolar_cut_diss.shp")
 solar_plants_laea <- st_transform(solar_plants, crs = st_crs(PV))
 
-solar_plants_laea$area <-
+solar_plants_laea$area_m2 <-st_area(solar_plants_laea)
+sum(solar_plants_laea$area_m2)
+solar_plants_laea$area_ha <- as.numeric(solar_plants_laea$area_m2) / 10000  #
+solar_plants_laea$area_km2 <- as.numeric(solar_plants_laea$area_m2) / 1000000  #
+
+PV$area_ha <- as.numeric(PV$area) / 10000  #
+PV$area_km2 <- as.numeric(PV$area) / 1000000
+
+sum(PV$area_km2) # 909.8402
+sum(solar_plants_laea$area_km2) # 1048.03
 
 
 mapview(solar_plants, col.regions = "orange") + mapview(PV)
