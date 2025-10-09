@@ -33,28 +33,38 @@ solar_plants <- bind_rows(solar_polygons, solar_multipolygons) %>%
     Start.Year = NA_integer_
   )
 
-# 3. Compute nearest distances between PV Spain points and OSM polygons
-nearest <- st_nearest_feature(solar_plants, pv_sf)
-distances <- st_distance(solar_plants, pv_sf[nearest, ], by_element = TRUE)
+# 3. Check spatial overlap and proximity
+# Transform both layers to metric CRS for distance calculations
+pv_proj <- st_transform(pv_sf, 3857)          # metric projection
+solar_proj <- st_transform(solar_plants, 3857)
 
-# Threshold distance for considering as duplicate
-threshold <- set_units(500, "m")
+# Define threshold in meters
+threshold <- set_units(500, "m")  # 500 meters
 
-# 4. Intersects check (OSM polygons that contain a PV Spain point)
-intersects_matrix <- st_intersects(solar_plants, pv_sf, sparse = FALSE)
+# Compute spatial relationships
+# TRUE if the OSM polygon contains a PV Spain point
+intersects_matrix <- st_intersects(solar_proj, pv_proj, sparse = FALSE)
 inside <- rowSums(intersects_matrix) > 0
 
-# 5. Discard OSM entries if too close or containing a PV Spain point
-osm_discarded <- solar_plants[distances <= threshold | inside, ]
-osm_unique <- solar_plants[!(distances <= threshold | inside), ]
+# TRUE if the OSM polygon is within threshold distance from any PV Spain point
+near_matrix <- st_is_within_distance(solar_proj, pv_proj, dist = threshold)
+near <- lengths(near_matrix) > 0
+
+# Combine logical conditions to identify duplicates
+duplicated_osm <- near | inside
+
+# Split OSM polygons into unique and discarded
+osm_discarded <- solar_proj[duplicated_osm, ]
+osm_unique <- solar_proj[!duplicated_osm, ]
 
 # 6. Combine PV Spain points with unique OSM polygons
-combined_pv <- bind_rows(pv_sf, osm_unique)
+combined_pv <- bind_rows(pv_sf, st_transform(osm_unique, st_crs(pv_sf)))  # back to original CRS
 
-# 7. Save outputs as GeoPackage 
+# 7. Save 
+combined_pv <- combined_pv %>% 
+  dplyr::select(Project.Name, Capacity.MW, Start.Year, Status, 'Phase name', 'Location accuracy', geometry)
 st_write(combined_pv, "data/pv_spain_osm_unique.gpkg", delete_layer = TRUE)
 
 # 8. Quick visualization with popups to check names
-x11()
-mapview(pv_sf, col.regions = "orange", alpha = 0.4, legend = FALSE, popup = "Project name") +
+mapview(pv_sf, col.regions = "orange", alpha = 0.4, legend = FALSE) +
   mapview(osm_discarded, col.regions = "blue", alpha = 0.6, legend = FALSE, popup = "Project.Name")
