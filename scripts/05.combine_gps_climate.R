@@ -1,0 +1,146 @@
+
+# --- Extract daily CHELSA v1.1 temperature for GPS points of Pterocles in Spain ---
+
+library(terra)
+library(dplyr)
+library(lubridate)
+library(purrr)
+library(readr)
+library(stringr)
+library(tictoc)
+library(ggplot2)
+library(plotly)
+
+# Set a safer temp directory
+terraOptions(tempdir = "D:/R_temp", memfrac = 0.7)
+
+# 1. Select only the two GPS CSVs for testing
+gps_files <- c("data/GPS/filtered_prep_BBS_90068.csv")
+
+# 2. Read all GPS CSVs and combine
+gps_data <- lapply(gps_files, function(f) {
+  df <- read_csv(f, guess_max = 10000, col_types = cols(.default = col_guess()))
+  
+  # Keep only relevant columns
+  cols_to_keep <- intersect(c("birdID", "device_id", "X_4326", "Y_4326", "date",
+                              "time_gmt0", "altitude", "sex", "age"), names(df))
+  df <- df %>% select(all_of(cols_to_keep))
+  
+  # Force column types
+  if("birdID" %in% cols_to_keep) df$birdID <- as.character(df$birdID)
+  if("device_id" %in% cols_to_keep) df$device_id <- as.character(df$device_id)
+  if("X_4326" %in% cols_to_keep) df$X_4326 <- as.numeric(df$X_4326)
+  if("Y_4326" %in% cols_to_keep) df$Y_4326 <- as.numeric(df$Y_4326)
+  if("date" %in% cols_to_keep) df$date <- as.Date(df$date)
+  
+  return(df)
+}) %>% bind_rows()
+
+# 3. List CHELSA files (only January to April)
+chelsa_files <-  c("data/CHELSA/chelsa-w5e5_obsclim_tas_30arcsec_lon-10.0to4.5lat35.0to44.5_daily_201001.nc", 
+                   "data/CHELSA/chelsa-w5e5_obsclim_tas_30arcsec_lon-10.0to4.5lat35.0to44.5_daily_201002.nc",
+                   "data/CHELSA/chelsa-w5e5_obsclim_tas_30arcsec_lon-10.0to4.5lat35.0to44.5_daily_201003.nc",
+                   "data/CHELSA/chelsa-w5e5_obsclim_tas_30arcsec_lon-10.0to4.5lat35.0to44.5_daily_201004.nc"
+)
+r <- rast(chelsa_files[1])
+range(values(r), na.rm = TRUE)
+
+
+# Extract year and month
+chelsa_df <- data.frame(file = chelsa_files) %>%
+  mutate(
+    ym = str_extract(basename(file), "\\d{6}"),
+    year = as.integer(substr(ym, 1, 4)),
+    month = as.integer(substr(ym, 5, 6))
+  ) %>% select(-ym)
+
+# 4. Function to extract temperature for a single GPS point and date
+extract_temp <- function(lon, lat, gps_date, chelsa_df) {
+  
+  yr <- year(gps_date)
+  mo <- month(gps_date)
+  
+  # Find the raster file for this year and month
+  file <- chelsa_df %>% filter(year == yr & month == mo) %>% pull(file)
+  if(length(file) == 0) return(NA)
+  
+  # Load raster (monthly file)
+  r <- rast(file)
+  
+  # Apply CHELSA offset
+  r <- r -273.15
+  
+  # Get the exact day layer
+  day_layer <- which(time(r) == gps_date)
+  if(length(day_layer) == 0) return(NA)
+  
+  # Create SpatVector for the point
+  point <- vect(data.frame(x = lon, y = lat), geom = c("x", "y"), crs = "EPSG:4326")
+  
+  # Extract value
+  temp <- terra::extract(r[[day_layer]], point)[, 2]
+  
+  # Clean up memory and temp files
+  terra::tmpFiles(remove = TRUE)
+  gc()
+  
+  return(temp)
+}
+
+# 5. Function to process GPS file
+process_gps_file <- function(gps_df, chelsa_df) {
+  gps_df$temperature <- pmap_dbl(
+    list(gps_df$X_4326, gps_df$Y_4326, gps_df$date),
+    function(x, y, d) extract_temp(x, y, d, chelsa_df)
+  )
+  return(gps_df)
+}
+
+# 6. Apply extraction to all selected GPS files
+tic("Processing GPS files")
+results_list <- purrr::map(gps_files, function(f) {
+  df <- read_csv(f, guess_max = 10000, col_types = cols(.default = col_guess()))
+  
+  cols_to_keep <- intersect(c("birdID", "device_id", "X_4326", "Y_4326", "date",
+                              "time_gmt0", "altitude", "sex", "age"), names(df))
+  df <- df %>% select(all_of(cols_to_keep))
+  if("date" %in% names(df)) df$date <- as.Date(df$date)
+  
+  message("Processing: ", basename(f))
+  res <- process_gps_file(df, chelsa_df)
+  
+  terra::tmpFiles(remove = TRUE)
+  gc()
+  
+  return(res)
+})
+toc()
+# 7. Combine all results
+gps_data_all <- bind_rows(results_list)
+
+# 8. Check results
+head(gps_data_all)
+gps_data_all[85:95, ]
+
+ # Select a random GPS record
+ sample_row <- gps_data_all[sample(1:nrow(gps_data_all), 1), ]
+
+ # Extract temperature
+ manual_temp <- extract_temp(sample_row$X_4326, sample_row$Y_4326, sample_row$date, chelsa_df)
+
+ # Compare with the temperature already in dataset
+ sample_row$temperature
+ manual_temp
+
+ # Create ggplot object first
+ p <- ggplot(gps_data_all, aes(x=X_4326, y=Y_4326, color=temperature,
+                               text=paste("Bird ID:", birdID, "<br>",
+                                          "Date:", date, "<br>",
+                                          "Time GMT0:", time_gmt0, "<br>",
+                                          "Temperature:", round(temperature,1), "°C"))) +
+   geom_point() + scale_color_viridis_c(option="plasma") + theme_minimal() +
+   labs(title="CHELSA Temperatures at GPS Points", x="Longitude", y="Latitude", color="Temperature (°C)")
+ 
+ # Convert ggplot to plotly plot
+ ggplotly(p, tooltip = "text")
+ 
