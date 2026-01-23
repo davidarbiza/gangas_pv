@@ -75,7 +75,7 @@ if (length(existing_files) == 0) {
   )
 }
 
-# Main loop over quadrants (starting at 7)
+# Main loop over quadrants
 for (q in seq(nrow(quads))) {
   cat("\n🚧 Processing quadrant", q, "of", nrow(quads), "...\n")
   

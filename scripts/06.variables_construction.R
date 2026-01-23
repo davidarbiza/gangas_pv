@@ -327,7 +327,12 @@ rm(ndvi, pop, het, dist_infra, r, r_25830)
 gc()
 
 
-# -- Check reprojection 25830 was done propertly --
+
+
+
+
+
+#### -- Check reprojection 25830 was done propertly -- ####
 # Original rasters
 originals <- c(
   "E:/TFM_gangas/NDVI/Spain/c_gls_NDVI300_201601010000_GLOBE_PROBAV_V1.0.1.nc",
@@ -388,54 +393,3 @@ for (i in seq_along(originals)) {
 }
 
 cat("\n✅ Reprojection check completed.\n")
-
-
-
-# --- Crop Climatics to Spain and reproject to EPSG:25830 ---
-
-library(terra)
-library(sf)
-
-# ---------------------------
-# Rutas
-# ---------------------------
-file_ec <- "E:/TFM_gangas/Climaticas/EasyClimate/DownscaledPrcp2022.tif"
-output_file <- "E:/TFM_gangas/Climaticas/EasyClimate/DownscaledPrcp2022_Spain25830.tif"
-
-# ---------------------------
-# Cargar raster
-# ---------------------------
-r_ec <- rast(file_ec)
-
-# ---------------------------
-# Definir bounding box de la Península Ibérica
-# ---------------------------
-peninsula_bbox <- st_bbox(c(xmin = -10, ymin = 35.5, xmax = 5, ymax = 44.5), crs = 4326)
-
-# Convertir a objeto sf y luego a vect para terra
-peninsula_sf <- st_as_sfc(peninsula_bbox)
-peninsula_vect <- vect(peninsula_sf)
-
-# ---------------------------
-# Recortar y enmascarar
-# ---------------------------
-r_ec_crop <- crop(r_ec, peninsula_vect)
-r_ec_mask <- mask(r_ec_crop, peninsula_vect)
-
-# ---------------------------
-# Reproyectar a EPSG:25830
-# ---------------------------
-r_ec_proj <- project(r_ec_mask, "EPSG:25830", method="bilinear")
-
-# ---------------------------
-# Guardar raster procesado
-# ---------------------------
-writeRaster(r_ec_proj, output_file, overwrite=TRUE)
-
-# ---------------------------
-# Comprobar resultados
-# ---------------------------
-cat("CRS final:\n"); print(crs(r_ec_proj))
-cat("Resolución final:\n"); print(res(r_ec_proj))
-cat("Número de capas (días):\n"); print(nlyr(r_ec_proj))
-
