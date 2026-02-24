@@ -81,7 +81,8 @@ datasets <- list(
   NDVI = "bilinear",
   Topograficas = "bilinear",
   Heterogeneidad = "bilinear",
-  UsosSuelo = "near"
+  LULUCF = "near",
+  COS2023 ="near"
 )
 
 # =============================

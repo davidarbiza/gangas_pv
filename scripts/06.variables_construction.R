@@ -10,7 +10,7 @@ terraOptions(
 )
 
 # Read all files
-dem_files <- list.files("E:/TFM_gangas/DEM", pattern = "\\.tif$", full.names = TRUE)
+dem_files <- list.files("E:/TFM_gangas/Topograficas/Auxiliares", pattern = "\\.tif$", full.names = TRUE)
 
 # Load as SpatRaster
 dem_list <- lapply(dem_files, rast)
@@ -21,6 +21,43 @@ mosaic_dem <- do.call(mosaic, c(dem_list, list(filename = output_path, overwrite
 
 
 gc()
+
+
+######## Reproject Spain DEM to 25830 #########
+
+library(terra)
+
+# Input
+dem_in <- "E:/TFM_gangas/Topograficas/Auxiliares/Spain_DEM_merged.tif"
+
+# Output
+dem_out <- "E:/TFM_gangas/Topograficas/Spain_DEM_reproject.tif"
+
+# Load DEM
+dem <- rast(dem_in)
+
+# Reproject
+dem_reproj <- project(
+  dem,
+  "EPSG:25830",
+  method = "bilinear"
+)
+
+# Save
+writeRaster(
+  dem_reproj,
+  dem_out,
+  overwrite = TRUE
+)
+
+cat("DONE\n")
+
+
+
+
+
+
+
 
 # --- 2. Generate country-specific year-month table for NDVI download ---
 library(dplyr)
@@ -34,7 +71,7 @@ pt_files <- c(
   "filtered_prep_BBS_2022_pt_3.csv",
   "filtered_prep_BBS_2022_pt_5.csv",
   "filtered_prep_BBS_2022_pt_6.csv",
-  "filtered_prep_BBS_2022_pt_8.csv",  # shared with Spain
+  "filtered_prep_BBS_2022_pt_8.csv",
   "filtered_prep_BBS_2021_pt_9.csv",
   "filtered_prep_BBS_2021_pt_10.csv",
   "filtered_prep_BBS_2021_pt_12.csv",
@@ -103,7 +140,7 @@ rm(hetero_rast, hetero_crop, hetero_mask)
 gc()
 
 # Load and process NDVI files
-ndvi_dir <- "E:/TFM_gangas/NDVI"
+ndvi_dir <- "E:/TFM_gangas/NDVI/Original"
 ndvi_files <- list.files(ndvi_dir, pattern = "\\.nc$", full.names = TRUE)
 output_ndvi_dir <- "E:/TFM_gangas/NDVI/Spain"
 
@@ -113,10 +150,18 @@ if (!dir.exists(output_ndvi_dir)) dir.create(output_ndvi_dir)
 # Loop over NDVI files
 for (ndvi_file in ndvi_files) {
   
-  # Load NDVI raster directly (no sds needed)
+  out_file <- file.path(output_ndvi_dir, basename(ndvi_file))
+  
+  # Skip if already processed
+  if (file.exists(out_file)) {
+    message("⏭️ ", basename(ndvi_file), " already exists. Skipping.")
+    next
+  }
+  
+  # Load NDVI raster directly
   ndvi_rast <- rast(ndvi_file)
   
-  # Crop and mask to Peninsula + Balearic Islands
+  # Crop and mask to Peninsula
   ndvi_crop <- crop(ndvi_rast, peninsula_vect)
   ndvi_mask <- mask(ndvi_crop, peninsula_vect)
   
@@ -393,3 +438,6 @@ for (i in seq_along(originals)) {
 }
 
 cat("\n✅ Reprojection check completed.\n")
+
+
+

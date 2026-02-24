@@ -1,0 +1,311 @@
+# ============================================================
+# VARIABLE EXTRACTION SCRIPT – TFM GANGAS
+# Stable version: crop once per CSV, no repeated disk writes
+# ============================================================
+
+### NON-CLIMATIC VARIABLES
+
+library(terra)
+library(sf)
+library(dplyr)
+library(lubridate)
+library(rnaturalearth)
+library(tictoc)
+
+# ---- Terra temp & memory settings ----
+dir.create("C:/Users/andre/AppData/Local/Temp/terra_tmpC", showWarnings = FALSE)
+terraOptions(
+  tempdir  = "C:/Users/andre/AppData/Local/Temp/terra_tmpC",
+  memfrac  = 0.6,
+  progress = 1
+)
+
+# ------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------
+base_dir <- "E:/TFM_gangas"
+gps_dir  <- file.path(base_dir, "GPS", "Merged")
+out_dir  <- file.path(base_dir, "GPS", "Extracted")
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+csv_files <- file.path(
+  gps_dir,
+  c(
+    "BBS_pseudoabsences_MCP40km.csv",
+    "BBS_pseudoabsences_P95.csv",
+    "BBS_pseudoabsences_Random.csv",
+    "PTS_pseudoabsences_MCP40km.csv",
+    "PTS_pseudoabsences_P95.csv",
+    "PTS_pseudoabsences_Random.csv"
+  )
+)
+
+# ------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------
+nearest_year <- function(y, years){
+  years[which.min(abs(years - y))]
+}
+
+nearest_index <- function(x, ref){
+  which.min(abs(ref - x))
+}
+
+# ------------------------------------------------------------
+# Portugal polygon (continental)
+# ------------------------------------------------------------
+por <- ne_countries(country = "Portugal", scale = "medium", returnclass = "sf")
+por_polys <- st_cast(por, "POLYGON")
+por_polys$area <- st_area(por_polys)
+por_cont <- por_polys %>% slice_max(area, n = 1)
+por_cont <- st_transform(por_cont, 25830)
+
+# ============================================================
+# MAIN LOOP
+# ============================================================
+for(csv in csv_files){
+  
+  tic(paste("Total time:", basename(csv)))
+  cat("\n🔹 Processing:", basename(csv), "\n")
+  
+  # ----------------------------------------------------------
+  # Read points
+  # ----------------------------------------------------------
+  pts <- read.csv(csv, stringsAsFactors = FALSE)
+  pts$date <- as.Date(pts$date)
+  pts$year <- year(pts$date)
+  
+  pts_vect <- vect(pts, geom = c("X_25830","Y_25830"), crs = "EPSG:25830")
+  pts_sf   <- st_as_sf(pts_vect)
+  
+  # ----------------------------------------------------------
+  # Define spatial extent (buffered)
+  # ----------------------------------------------------------
+  ext_pts  <- ext(pts_vect)
+  ext_crop <- ext(
+    ext_pts$xmin - 5000, ext_pts$xmax + 5000,
+    ext_pts$ymin - 5000, ext_pts$ymax + 5000
+  )
+  
+  # ==========================================================
+  # CROP RASTERS ONCE (NON-CLIMATIC ONLY)
+  # ==========================================================
+  tic("Cropping rasters")
+  
+  dem  <- crop(rast("E:/TFM_gangas/Topograficas/300m/Spain_DEM_reproject_300m.tif"), ext_crop)
+  slp  <- crop(rast("E:/TFM_gangas/Topograficas/300m/Slope_map_Spain_300m.tif"), ext_crop)
+  asp  <- crop(rast("E:/TFM_gangas/Topograficas/300m/Orientation_map_Spain_300m.tif"), ext_crop)
+  rng  <- crop(rast("E:/TFM_gangas/Topograficas/300m/Altitudinal_range_Spain_300m.tif"), ext_crop)
+  
+  topo_stack <- c(dem, slp, asp, rng)
+  names(topo_stack) <- c("Altitude","Slope","Aspect","AltRange")
+  
+  dist_roads <- crop(
+    rast(list.files(file.path(base_dir,"DistanciaCarreteras","300m"),
+                    pattern="\\.tif$", full.names=TRUE)),
+    ext_crop
+  )
+  names(dist_roads) <- "DistRoad"
+  
+  heterogeneity <- crop(
+    rast(list.files(file.path(base_dir,"Heterogeneidad","300m"),
+                    pattern="\\.tif$", full.names=TRUE)),
+    ext_crop
+  )
+  names(heterogeneity) <- "Heterogeneity"
+  
+  pop_files <- list.files(file.path(base_dir,"DensidadPoblacion","300m"),
+                          pattern="\\.tif$", full.names=TRUE)
+  pop_years <- as.numeric(regmatches(pop_files, regexpr("[0-9]{4}", pop_files)))
+  pop_stack <- crop(rast(pop_files), ext_crop)
+  
+  hfp_files <- list.files(file.path(base_dir,"HumanFootprint","300m"),
+                          pattern="\\.tif$", full.names=TRUE)
+  hfp_years <- as.numeric(regmatches(hfp_files, regexpr("[0-9]{4}", hfp_files)))
+  hfp_stack <- crop(rast(hfp_files), ext_crop)
+  
+  ndvi_files <- list.files(file.path(base_dir,"NDVI","SpainReprojected","300m"),
+                           pattern="\\.tif$", full.names=TRUE)
+  ndvi_dates <- as.Date(regmatches(ndvi_files, regexpr("[0-9]{8}", ndvi_files)), "%Y%m%d")
+  
+  toc()
+  
+  # ==========================================================
+  # STATIC VARIABLES
+  # ==========================================================
+  tic("Static variables")
+  
+  static_stack <- c(topo_stack, dist_roads, heterogeneity)
+  static_vals  <- terra::extract(static_stack, pts_vect)[,-1]
+ 
+   # scale heterogeneity
+  static_vals$Heterogeneity <- static_vals$Heterogeneity / 10000
+  pts <- bind_cols(pts, static_vals)
+  
+  
+  toc()
+  
+  # ==========================================================
+  # Population
+  # ==========================================================
+  tic("Population")
+  
+  pts$Population <- NA_real_
+  pop_use_year <- sapply(pts$year, nearest_year, years = pop_years)
+  
+  for(yr in unique(pop_use_year)){
+    idx <- which(pop_use_year == yr)
+    r   <- pop_stack[[which(pop_years == yr)]]
+    pts$Population[idx] <- terra::extract(r, pts_vect[idx,])[,2]
+  }
+  
+  toc()
+  
+  # ==========================================================
+  # Human Footprint
+  # ==========================================================
+  tic("Human Footprint")
+  
+  pts$HFP <- NA_real_
+  hfp_use_year <- pts$year
+  hfp_use_year[hfp_use_year < min(hfp_years)] <- min(hfp_years)
+  hfp_use_year[hfp_use_year > max(hfp_years)] <- max(hfp_years)
+  
+  for(yr in unique(hfp_use_year)){
+    idx <- which(hfp_use_year == yr)
+    r   <- hfp_stack[[which(hfp_years == yr)]]
+    pts$HFP[idx] <- terra::extract(r, pts_vect[idx,])[,2] / 1000
+  }
+  
+  toc()
+  
+  # ==========================================================
+  # NDVI (nearest date)
+  # ==========================================================
+  tic("NDVI")
+  
+  pts$NDVI <- NA_real_
+  ndvi_idx <- sapply(pts$date, function(d) nearest_index(d, ndvi_dates))
+  
+  for(i in unique(ndvi_idx)){
+    idx <- which(ndvi_idx == i)
+    r   <- crop(rast(ndvi_files[i]), ext_crop)
+    pts$NDVI[idx] <- terra::extract(r, pts_vect[idx,])[,2]
+    rm(r); gc()
+  }
+  
+  toc()
+  
+  # ==========================================================
+  # Land use
+  # ==========================================================
+  tic("Land use")
+  
+  pts$LandCover <- NA_real_
+  is_portugal <- lengths(st_intersects(pts_sf, por_cont)) > 0
+  
+  cos_rast <- crop(
+    rast(list.files(file.path(base_dir,"UsosSuelo","COS2023","300m"),
+                    pattern="\\.tif$", full.names=TRUE)),
+    ext_crop
+  )
+  pts$LandCover[is_portugal] <- terra::extract(cos_rast, pts_vect[is_portugal,])[,2]
+  
+  lulucf_files <- list.files(file.path(base_dir,"UsosSuelo","LULUCF","300m"),
+                             pattern="\\.tif$", full.names=TRUE)
+  lulucf_years <- as.numeric(regmatches(lulucf_files, regexpr("[0-9]{4}", lulucf_files)))
+  lulucf_stack <- crop(rast(lulucf_files), ext_crop)
+  
+  sp_year <- sapply(pts$year[!is_portugal], nearest_year, years = lulucf_years)
+  idx_sp  <- which(!is_portugal)
+  
+  for(yr in unique(sp_year)){
+    idx <- idx_sp[sp_year == yr]
+    r   <- lulucf_stack[[which(lulucf_years == yr)]]
+    pts$LandCover[idx] <- terra::extract(r, pts_vect[idx,])[,2]
+  }
+  
+  toc()
+  
+  # ==========================================================
+  # SAVE (NON-CLIMATIC)
+  # ==========================================================
+  pts_final <- pts %>%
+    select(
+      birdID, date, X_25830, Y_25830, species, presence,
+      Altitude, Slope, Aspect, AltRange,
+      LandCover, Heterogeneity, NDVI,
+      Population, HFP, DistRoad
+    )
+  
+  out_file <- file.path(
+    out_dir,
+    paste0(tools::file_path_sans_ext(basename(csv)), "_env.csv")
+  )
+  write.csv(pts_final, out_file, row.names = FALSE)
+  
+  cat("✅ Saved:", basename(out_file), "\n")
+  toc()
+  
+  rm(list = ls()[!ls() %in% c("base_dir","gps_dir","out_dir","csv_files",
+                              "nearest_year","nearest_index","por_cont")])
+  gc()
+}
+
+
+
+
+
+
+
+# ============================================================
+# CLIMATIC VARIABLES EXTRACTION – TFM GANGAS
+# ============================================================
+
+library(terra)
+library(lubridate)
+library(tictoc)
+
+base_dir <- "E:/TFM_gangas"
+in_dir   <- file.path(base_dir,"GPS","Extracted")
+
+csv_files <- list.files(in_dir, pattern="_env\\.csv$", full.names=TRUE)
+
+clim_base <- file.path(base_dir,"Climaticas","10_days")
+
+clim_files <- list(
+  Tmin       = list.files(file.path(clim_base,"Tmin","300m"), pattern="\\.tif$", full.names=TRUE),
+  TminSD100  = list.files(file.path(clim_base,"Tmin","300m"), pattern="sd",   full.names=TRUE),
+  Tmax       = list.files(file.path(clim_base,"Tmax","300m"), pattern="\\.tif$", full.names=TRUE),
+  TmaxSD100  = list.files(file.path(clim_base,"Tmax","300m"), pattern="sd",   full.names=TRUE),
+  Prcp       = list.files(file.path(clim_base,"Prcp","300m"), pattern="\\.tif$", full.names=TRUE)
+)
+
+for(csv in csv_files){
+  
+  tic(basename(csv))
+  
+  pts <- read.csv(csv, stringsAsFactors = FALSE)
+  pts$date <- as.Date(pts$date)
+  
+  pts_vect <- vect(pts, geom = c("X_25830","Y_25830"), crs = "EPSG:25830")
+  band_idx <- ceiling(yday(pts$date) / 10)
+  
+  for(v in names(clim_files)){
+    pts[[v]] <- NA_real_
+    r <- rast(clim_files[[v]][1])
+    
+    bidx <- band_idx
+    bidx[bidx > nlyr(r)] <- nlyr(r)
+    
+    for(b in unique(bidx)){
+      idx <- which(bidx == b)
+      pts[[v]][idx] <- terra::extract(r[[b]], pts_vect[idx,])[,2] / 100
+    }
+    
+    rm(r); gc()
+  }
+  
+  write.csv(pts, csv, row.names = FALSE)
+  toc()
+}

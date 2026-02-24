@@ -287,10 +287,10 @@ library(terra)
 # PATHS
 # -----------------------
 base_folder <- "E:/TFM_gangas/LULUCF/CLC2018/"
-intermediate_file <- "CLC2018_PB.tif"  # raster ya recortado
+intermediate_file <- "CLC2018_PB.tif" 
 
 # -----------------------
-# FINAL CLASS VALUES (ORDERED)
+# FINAL CLASS VALUES 
 # -----------------------
 classes <- c(
   "Bosques" = 1,
@@ -319,7 +319,6 @@ class_table <- data.frame(
 
 # -----------------------
 # CLC RECLASS MATRIX
-# (FROM raster values → final class values)
 # -----------------------
 clc_matrix <- matrix(c(
   1,13,  2,13,  3,13,  4,13,  5,13,  6,13,
@@ -430,77 +429,124 @@ for (f in files) {
 
 
 
+################################
+# CLC2018 REMOVE NODATA SCRIPT
+################################
 
-############################
-# AREA PERCENTAGE PER CLASS
-############################
+library(terra)
+
+# -----------------------
+# PATHS
+# -----------------------
+base_folder <- "E:/TFM_gangas/LULUCF/CLC2018/"
+clc_file <- "CLC2018_PB_Reclass.tif"
+
+# -----------------------
+# LOAD RASTER
+# -----------------------
+r <- rast(paste0(base_folder, clc_file))
+
+# -----------------------
+# REMOVE NODATA CELLS
+# -----------------------
+# NODATA value = 999
+r_noNODATA <- r
+r_noNODATA[r_noNODATA == 999] <- NA
+
+# -----------------------
+# SAVE NEW RASTER
+# -----------------------
+out_file <- paste0(base_folder, "CLC2018_PB_NoNODATA.tif")
+writeRaster(r_noNODATA, out_file, overwrite=TRUE)
+
+cat("CLC2018 raster without NODATA saved as:\n", out_file, "\n")
+
+
+
+
+
+
+################################
+# CLC2018 CLASS PERCENTAGE SCRIPT (aligned to 300 m)
+################################
 
 library(terra)
 library(openxlsx)
 
+# -----------------------
+# PATHS
+# -----------------------
 base_folder <- "E:/TFM_gangas/LULUCF/"
-
 files <- list(
   LULUCF2015 = paste0(base_folder, "LULUCF2015_PB_Reclass.tif"),
   LULUCF2018 = paste0(base_folder, "LULUCF2018_PB_Reclass.tif"),
   LULUCF2021 = paste0(base_folder, "LULUCF2021_PB_Reclass.tif"),
   COS2023    = paste0(base_folder, "COS2023v1-S2_Reclass.tif"),
-  CLC2018    = paste0(base_folder, "CLC2018/CLC2018_PB_Reclass.tif")
+  CLC2018    = paste0(base_folder, "CLC2018/CLC2018_PB_NoNODATA.tif") # nuevo sin NODATA
 )
 
+# -----------------------
+# CLASS NAMES
+# -----------------------
 class_names <- c(
-  "1"="Bosques","2"="Olivares","3"="Viñedos","4"="Otros cultivos perennes",
-  "5"="Arrozales","6"="Invernaderos","7"="Cultivos anuales de secano",
-  "8"="Pastizales con árboles","9"="Pastizales arbustivos",
-  "10"="Pastizales herbáceos","11"="Zonas acuáticas","12"="Marismas",
-  "13"="Áreas artificiales","14"="Otras tierras",
-  "15"="Mosaico de cultivos complejos","16"="Cultivos anuales de regadío",
-  "999"="NODATA"
+  "1" = "Bosques",
+  "2" = "Olivares",
+  "3" = "Viñedos",
+  "4" = "Otros cultivos perennes",
+  "5" = "Arrozales",
+  "6" = "Invernaderos",
+  "7" = "Cultivos anuales de secano",
+  "8" = "Pastizales con árboles",
+  "9" = "Pastizales arbustivos",
+  "10" = "Pastizales herbáceos",
+  "11" = "Zonas acuáticas",
+  "12" = "Marismas",
+  "13" = "Áreas artificiales",
+  "14" = "Otras tierras",
+  "15" = "Mosaico de cultivos complejos",
+  "16" = "Cultivos anuales de regadío"
 )
 
+# -----------------------
+# CREATE WORKBOOK
+# -----------------------
 wb <- createWorkbook()
 
+# -----------------------
+# DEFINE TEMPLATE (300 m, aligned to LULUCF2015)
+# -----------------------
+template <- rast(files$LULUCF2015)
+res(template) <- 300        # 300 m resolution
+origin(template) <- c(0,0)  # same origin
+
+# -----------------------
+# PROCESS FILES
+# -----------------------
 for (name in names(files)) {
+  cat("Processing", name, "...\n")
   
-  cat("Processing", name, "\n")
   r <- rast(files[[name]])
-  f <- as.data.frame(freq(r))
-  f <- f[!is.na(f$value), ]
+  
+  # Resample to 300 m, aligned to template
+  r_resamp <- resample(r, template, method="near")
+  
+  # Frequency and percentage
+  f <- freq(r_resamp)
+  f$percentage <- round(100 * f$count / sum(f$count), 2)
   f$class_name <- class_names[as.character(f$value)]
   
+  f <- f[order(as.numeric(f$value)), c("value","class_name","count","percentage")]
+  names(f) <- c("Class value","Class name","Cell count","Percentage (%)")
+  
+  # Add sheet
   addWorksheet(wb, name)
-  
-  # =========================================================
-  # TABLE 1 — INCLUDING NODATA (real raster proportions)
-  # =========================================================
-  total_all <- sum(f$count)
-  tab_all <- f
-  tab_all$percentage <- round((tab_all$count / total_all) * 100, 2)
-  tab_all <- tab_all[order(as.numeric(tab_all$value)), c("value","class_name","count","percentage")]
-  names(tab_all) <- c("Class value","Class name","Cell count","Percentage (%)")
-  
-  writeData(wb, name, "Percentages INCLUDING NODATA", startRow=1, startCol=1)
-  writeData(wb, name, tab_all, startRow=2, startCol=1)
-  
-  # =========================================================
-  # TABLE 2 — EXCLUDING NODATA (CLC only)
-  # =========================================================
-  if (name == "CLC2018") {
-    
-    tab_land <- f[f$value != 999, ]   # REMOVE NODATA ROWS
-    total_land <- sum(tab_land$count) # NEW denominator
-    
-    tab_land$percentage <- round((tab_land$count / total_land) * 100, 2)
-    tab_land <- tab_land[order(as.numeric(tab_land$value)), c("value","class_name","count","percentage")]
-    names(tab_land) <- c("Class value","Class name","Cell count","Percentage (%)")
-    
-    start_row <- nrow(tab_all) + 5
-    
-    writeData(wb, name, "Percentages EXCLUDING NODATA (Land only)", startRow=start_row, startCol=1)
-    writeData(wb, name, tab_land, startRow=start_row + 1, startCol=1)
-  }
+  writeData(wb, name, f)
 }
 
-saveWorkbook(wb, paste0(base_folder, "Class_percentage.xlsx"), overwrite=TRUE)
+# -----------------------
+# SAVE EXCEL
+# -----------------------
+out_excel <- paste0(base_folder, "Class_percentage_Aligned.xlsx")
+saveWorkbook(wb, out_excel, overwrite=TRUE)
+cat("Class percentages saved in Excel:\n", out_excel, "\n")
 
-cat("Excel saved in:", paste0(base_folder, "Class_percentage.xlsx"), "\n")
