@@ -21,8 +21,8 @@ gc()
 set.seed(12345)
 
 # 3. Paths
-bbs_file <- "E:/TFM_gangas/GPS/Merged/BBS_filtered_NoPseudoreplication.csv"
-pts_file <- "E:/TFM_gangas/GPS/Merged/PTS_filtered_NoPseudoreplication.csv"
+bbs_file <- "E:/TFM_gangas/GPS/MergedV.2/BBS_filtered_NoPseudoreplication.csv"
+pts_file <- "E:/TFM_gangas/GPS/MergedV.2/PTS_filtered_NoPseudoreplication.csv"
 
 # 4. Load data
 bbs_data <- read_csv(bbs_file)
@@ -65,7 +65,23 @@ generate_pseudoabsences <- function(presences, mask_raster, n_per_presence = 5) 
   
   total_n <- nrow(presences) * n_per_presence
   
-  pts <- randomPoints(mask = mask_raster,
+  # -----------------------------------
+  # EXCLUDE PRESENCE CELLS (≈300 m)
+  # -----------------------------------
+  presence_sp <- SpatialPoints(
+    presences[, c("X_25830","Y_25830")],
+    proj4string = CRS(projection(mask_raster))
+  )
+  
+  presence_raster <- rasterize(presence_sp, mask_raster, field = 1)
+  
+  mask_clean <- mask_raster
+  mask_clean[!is.na(presence_raster)] <- NA
+  
+  # -----------------------------------
+  # GENERATE POINTS
+  # -----------------------------------
+  pts <- randomPoints(mask = mask_clean,
                       n = total_n,
                       extf = 1.0,
                       warn = 0)
@@ -107,8 +123,8 @@ points(pts_pseudo$X_25830,
        col = "red", pch = 20, cex = 0.1)
 
 # 12. Save results
-write_csv(bbs_final, "E:/TFM_gangas/GPS/Merged/BBS_pseudoabsences_Random.csv")
-write_csv(pts_final, "E:/TFM_gangas/GPS/Merged/PTS_pseudoabsences_Random.csv")
+write_csv(bbs_final, "E:/TFM_gangas/GPS/MergedV.2/BBS_pseudoabsences_Random.csv")
+write_csv(pts_final, "E:/TFM_gangas/GPS/MergedV.2/PTS_pseudoabsences_Random.csv")
 
 cat("Done! Pseudo-absences generated and saved.\n")
 
@@ -135,8 +151,8 @@ gc
 set.seed(12345)
 
 # Paths
-bbs_file <- "E:/TFM_gangas/GPS/Merged/BBS_filtered_NoPseudoreplication.csv"
-pts_file <- "E:/TFM_gangas/GPS/Merged/PTS_filtered_NoPseudoreplication.csv"
+bbs_file <- "E:/TFM_gangas/GPS/MergedV.2/BBS_filtered_NoPseudoreplication.csv"
+pts_file <- "E:/TFM_gangas/GPS/MergedV.2/PTS_filtered_NoPseudoreplication.csv"
 
 # Load data
 bbs_data <- read_csv(bbs_file)
@@ -248,8 +264,8 @@ points(pts_pseudo$X_25830,
        col = "red", pch = 20, cex = 0.1)
 
 # Save
-write_csv(bbs_final, "E:/TFM_gangas/GPS/Merged/BBS_pseudoabsences_P95.csv")
-write_csv(pts_final, "E:/TFM_gangas/GPS/Merged/PTS_pseudoabsences_P95.csv")
+write_csv(bbs_final, "E:/TFM_gangas/GPS/MergedV.2/BBS_pseudoabsences_P95.csv")
+write_csv(pts_final, "E:/TFM_gangas/GPS/MergedV.2/PTS_pseudoabsences_P95.csv")
 
 cat("Done! P95 pseudo-absences generated.\n")
 
@@ -277,8 +293,8 @@ gc()
 set.seed(12345)
 
 # Paths
-bbs_file <- "E:/TFM_gangas/GPS/Merged/BBS_filtered_NoPseudoreplication.csv"
-pts_file <- "E:/TFM_gangas/GPS/Merged/PTS_filtered_NoPseudoreplication.csv"
+bbs_file <- "E:/TFM_gangas/GPS/MergedV.2/BBS_filtered_NoPseudoreplication.csv"
+pts_file <- "E:/TFM_gangas/GPS/MergedV.2/PTS_filtered_NoPseudoreplication.csv"
 
 # Load data
 bbs_data <- read_csv(bbs_file)
@@ -390,7 +406,88 @@ points(pts_pseudo$X_25830,
        col = "red", pch = 20, cex = 0.1)
 
 # Save
-write_csv(bbs_final, "E:/TFM_gangas/GPS/Merged/BBS_pseudoabsences_MCP40km.csv")
-write_csv(pts_final, "E:/TFM_gangas/GPS/Merged/PTS_pseudoabsences_MCP40km.csv")
+write_csv(bbs_final, "E:/TFM_gangas/GPS/MergedV.2/BBS_pseudoabsences_MCP40km.csv")
+write_csv(pts_final, "E:/TFM_gangas/GPS/MergedV.2/PTS_pseudoabsences_MCP40km.csv")
 
 cat("Done! MCP + 40 km pseudo-absences generated.\n")
+
+
+
+
+
+
+
+
+
+
+# ==========================================
+# CHECK SPATIAL DISTRIBUTION OF PSEUDOABSENCES
+# ==========================================
+
+library(data.table)
+library(terra)
+
+# -------------------------
+# PATHS
+# -------------------------
+base_path <- "E:/TFM_gangas/GPS/MergedV.2"
+
+files <- list(
+  Random_BBS = file.path(base_path, "BBS_pseudoabsences_Random.csv"),
+  Random_PTS = file.path(base_path, "PTS_pseudoabsences_Random.csv"),
+  
+  P95_BBS    = file.path(base_path, "BBS_pseudoabsences_P95.csv"),
+  P95_PTS    = file.path(base_path, "PTS_pseudoabsences_P95.csv"),
+  
+  MCP_BBS    = file.path(base_path, "BBS_pseudoabsences_MCP40km.csv"),
+  MCP_PTS    = file.path(base_path, "PTS_pseudoabsences_MCP40km.csv")
+)
+
+# NDVI reference raster (para cell_id)
+ndvi_path <- "E:/TFM_gangas/NDVI/SpainReprojected/300m"
+ndvi_file <- list.files(ndvi_path, pattern = "\\.tif$", full.names = TRUE)[1]
+ndvi_ref <- rast(ndvi_file)
+
+# -------------------------
+# LOOP
+# -------------------------
+for(name in names(files)){
+  
+  cat("\n====================================\n")
+  cat("CHECKING:", name, "\n")
+  cat("====================================\n")
+  
+  dt <- fread(files[[name]])
+  
+  # Solo pseudoausencias
+  dt <- dt[presence == 0]
+  
+  cat("Total pseudoabsences:", nrow(dt), "\n")
+  
+  # Crear cell_id
+  coords <- as.matrix(dt[, .(X_25830, Y_25830)])
+  dt[, cell_id := cellFromXY(ndvi_ref, coords)]
+  
+  # Conteo por celda
+  cell_counts <- dt[, .N, by = cell_id]
+  
+  cat("\n--- Distribution of points per cell ---\n")
+  print(summary(cell_counts$N))
+  
+  cat("\n--- Frequency table (how many cells have X points) ---\n")
+  print(table(cell_counts$N))
+  
+  # Máximo
+  cat("\nMax points in a single cell:", max(cell_counts$N), "\n")
+  
+  # Celdas con muchos puntos (umbral arbitrario)
+  high_density <- cell_counts[N >= 10]
+  
+  cat("\nCells with >=10 points:", nrow(high_density), "\n")
+  
+  if(nrow(high_density) > 0){
+    cat("⚠ WARNING: high clustering detected\n")
+  } else {
+    cat("✔ OK: no strong clustering\n")
+  }
+}

@@ -1,6 +1,5 @@
 # ============================================================
 # VARIABLE EXTRACTION SCRIPT – TFM GANGAS
-# Stable version: crop once per CSV, no repeated disk writes
 # ============================================================
 
 ### NON-CLIMATIC VARIABLES
@@ -24,8 +23,8 @@ terraOptions(
 # Paths
 # ------------------------------------------------------------
 base_dir <- "E:/TFM_gangas"
-gps_dir  <- file.path(base_dir, "GPS", "Merged")
-out_dir  <- file.path(base_dir, "GPS", "Extracted")
+gps_dir  <- file.path(base_dir, "GPS", "MergedV.2")
+out_dir  <- file.path(base_dir, "GPS", "ExtractedV.2")
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 csv_files <- file.path(
@@ -137,11 +136,9 @@ for(csv in csv_files){
   
   static_stack <- c(topo_stack, dist_roads, heterogeneity)
   static_vals  <- terra::extract(static_stack, pts_vect)[,-1]
- 
-   # scale heterogeneity
+  
   static_vals$Heterogeneity <- static_vals$Heterogeneity / 10000
   pts <- bind_cols(pts, static_vals)
-  
   
   toc()
   
@@ -180,18 +177,40 @@ for(csv in csv_files){
   toc()
   
   # ==========================================================
-  # NDVI (nearest date)
+  # NDVI
   # ==========================================================
   tic("NDVI")
   
   pts$NDVI <- NA_real_
-  ndvi_idx <- sapply(pts$date, function(d) nearest_index(d, ndvi_dates))
   
-  for(i in unique(ndvi_idx)){
-    idx <- which(ndvi_idx == i)
-    r   <- crop(rast(ndvi_files[i]), ext_crop)
-    pts$NDVI[idx] <- terra::extract(r, pts_vect[idx,])[,2]
-    rm(r); gc()
+  # Extract year and 10-day block
+  pts$year  <- year(pts$date)
+  pts$block <- ceiling(yday(pts$date) / 10)
+  
+  # Extract NDVI dates from filenames
+  ndvi_dates <- as.Date(regmatches(ndvi_files, regexpr("[0-9]{8}", ndvi_files)), "%Y%m%d")
+  ndvi_year  <- year(ndvi_dates)
+  ndvi_block <- ceiling(yday(ndvi_dates) / 10)
+  
+  for(yr in unique(pts$year)){
+    
+    idx_year <- which(pts$year == yr)
+    
+    for(b in unique(pts$block[idx_year])){
+      
+      idx <- idx_year[pts$block[idx_year] == b]
+      
+      # Find matching NDVI file for year + block
+      match_file <- which(ndvi_year == yr & ndvi_block == b)
+      
+      if(length(match_file) == 0) next
+      
+      r <- crop(rast(ndvi_files[match_file[1]]), ext_crop)
+      
+      pts$NDVI[idx] <- terra::extract(r, pts_vect[idx,])[,2]
+      
+      rm(r); gc()
+    }
   }
   
   toc()
@@ -201,42 +220,52 @@ for(csv in csv_files){
   # ==========================================================
   tic("Land use")
   
-  pts$LandCover <- NA_real_
   is_portugal <- lengths(st_intersects(pts_sf, por_cont)) > 0
   
-  cos_rast <- crop(
-    rast(list.files(file.path(base_dir,"UsosSuelo","COS2023","300m"),
-                    pattern="\\.tif$", full.names=TRUE)),
-    ext_crop
-  )
-  pts$LandCover[is_portugal] <- terra::extract(cos_rast, pts_vect[is_portugal,])[,2]
+  # ---- COS2023 (Portugal) ----
+  cos_files <- list.files(file.path(base_dir,"UsosSuelo","COS2023","300m"),
+                          pattern="\\.tif$", full.names=TRUE)
+  cos_stack <- crop(rast(cos_files), ext_crop)
   
+  lc_names <- c(
+    "LC_Forest","LC_Vineyards","LC_TreeCrops","LC_RiceFields",
+    "LC_Greenhouses","LC_AnnualCrops","LC_TreePasture","LC_ShrubPasture","LC_HerbPasture",
+    "LC_WaterBodies","LC_Marshes","LC_Artificial","LC_OtherLand","LC_AgriMosaic"
+  )
+  names(cos_stack) <- lc_names
+  
+  for(nm in lc_names){
+    pts[[nm]] <- NA_real_
+  }
+  
+  pts[is_portugal, lc_names] <-
+    terra::extract(cos_stack, pts_vect[is_portugal,])[, -1]
+  
+  # ---- LULUCF (Spain) ----
   lulucf_files <- list.files(file.path(base_dir,"UsosSuelo","LULUCF","300m"),
                              pattern="\\.tif$", full.names=TRUE)
   lulucf_years <- as.numeric(regmatches(lulucf_files, regexpr("[0-9]{4}", lulucf_files)))
-  lulucf_stack <- crop(rast(lulucf_files), ext_crop)
   
-  sp_year <- sapply(pts$year[!is_portugal], nearest_year, years = lulucf_years)
-  idx_sp  <- which(!is_portugal)
-  
-  for(yr in unique(sp_year)){
-    idx <- idx_sp[sp_year == yr]
-    r   <- lulucf_stack[[which(lulucf_years == yr)]]
-    pts$LandCover[idx] <- terra::extract(r, pts_vect[idx,])[,2]
+  for(yr in unique(pts$year[!is_portugal])){
+    idx <- which(!is_portugal & pts$year == yr)
+    use_yr <- nearest_year(yr, lulucf_years)
+    r <- crop(rast(lulucf_files[lulucf_years == use_yr]), ext_crop)
+    names(r) <- lc_names
+    pts[idx, lc_names] <- terra::extract(r, pts_vect[idx,])[, -1]
+    rm(r); gc()
   }
   
   toc()
   
   # ==========================================================
-  # SAVE (NON-CLIMATIC)
+  # SAVE
   # ==========================================================
-  pts_final <- pts %>%
-    select(
-      birdID, date, X_25830, Y_25830, species, presence,
-      Altitude, Slope, Aspect, AltRange,
-      LandCover, Heterogeneity, NDVI,
-      Population, HFP, DistRoad
-    )
+  pts_final <- dplyr::select(pts,
+  birdID, date, X_25830, Y_25830, species, presence,
+  Altitude, Slope, Aspect, AltRange,
+  Heterogeneity, NDVI,
+  Population, HFP, DistRoad, all_of(lc_names)
+)
   
   out_file <- file.path(
     out_dir,
@@ -256,8 +285,6 @@ for(csv in csv_files){
 
 
 
-
-
 # ============================================================
 # CLIMATIC VARIABLES EXTRACTION – TFM GANGAS
 # ============================================================
@@ -267,7 +294,7 @@ library(lubridate)
 library(tictoc)
 
 base_dir <- "E:/TFM_gangas"
-in_dir   <- file.path(base_dir,"GPS","Extracted")
+in_dir   <- file.path(base_dir,"GPS","ExtractedV.2")
 
 csv_files <- list.files(in_dir, pattern="_env\\.csv$", full.names=TRUE)
 
@@ -309,3 +336,619 @@ for(csv in csv_files){
   write.csv(pts, csv, row.names = FALSE)
   toc()
 }
+
+
+
+
+
+# ============================================================
+# CLIMATIC VARIABLES EXTRACTION – TFM GANGAS (TMEAN ONLY)
+# ============================================================
+
+library(terra)
+library(lubridate)
+library(tictoc)
+
+base_dir <- "E:/TFM_gangas"
+in_dir   <- file.path(base_dir,"GPS","ExtractedV.2")
+
+csv_files <- list.files(in_dir, pattern="_env\\.csv$", full.names=TRUE)
+
+clim_base <- file.path(base_dir,"Climaticas","10_days")
+
+clim_files <- list(
+  Tmean      = list.files(file.path(clim_base,"Tmean","300m"),
+                          pattern="Tmean_mean_.*_300m\\.tif$",
+                          full.names=TRUE),
+  
+  TmeanSD100 = list.files(file.path(clim_base,"Tmean","300m"),
+                          pattern="Tmean_sd_.*_300m\\.tif$",
+                          full.names=TRUE)
+)
+
+for(csv in csv_files){
+  
+  tic(basename(csv))
+  
+  pts <- read.csv(csv, stringsAsFactors = FALSE)
+  pts$date <- as.Date(pts$date)
+  
+  pts_vect <- vect(pts, geom = c("X_25830","Y_25830"), crs = "EPSG:25830")
+  
+  band_idx <- ceiling(yday(pts$date) / 10)
+  
+  for(v in names(clim_files)){
+    
+    pts[[v]] <- NA_real_
+    
+    years_pts <- unique(year(pts$date))
+    
+    for(yr in years_pts){
+      
+      r_file <- clim_files[[v]][grepl(yr, clim_files[[v]])]
+      if(length(r_file) == 0) next
+      
+      r <- rast(r_file)
+      
+      idx_year <- which(year(pts$date) == yr)
+      bidx <- band_idx[idx_year]
+      
+      bidx[bidx > nlyr(r)] <- nlyr(r)
+      
+      for(b in unique(bidx)){
+        idx <- idx_year[which(bidx == b)]
+        pts[[v]][idx] <- terra::extract(r[[b]], pts_vect[idx,])[,2] / 100
+      }
+      
+      rm(r); gc()
+    }
+  }
+  
+  write.csv(pts, csv, row.names = FALSE)
+  toc()
+}
+
+
+
+
+
+
+
+# ============================================================
+# CHECK CORRELATION AND VIF
+# ============================================================
+library(dplyr)
+library(openxlsx)
+library(ggplot2)
+library(car)
+library(usdm)
+library(patchwork)
+
+# ------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------
+base_path <- "E:/TFM_gangas/GPS/ExtractedV.2"
+
+files <- list(
+  PTS = file.path(base_path, "PTS_pseudoabsences_Random_env.csv"),
+  BBS = file.path(base_path, "BBS_pseudoabsences_Random_env.csv")
+)
+
+# ------------------------------------------------------------
+# Create workbook
+# ------------------------------------------------------------
+wb <- createWorkbook()
+
+plots_heatmap <- list()
+
+for(sp in names(files)) {
+  
+  cat("\nProcessing:", sp, "\n")
+  
+  env <- read.csv(files[[sp]])
+  
+  # Remove non-predictor variables
+  env_clean <- env %>%
+    dplyr::select(-birdID,
+                  -date,
+                  -species,
+                  -X_25830,
+                  -Y_25830,
+                  -presence
+    )
+  
+  env_clean <- na.omit(env_clean)
+  
+  # ------------------------------------------------------------
+  # CORRELATION MATRIX
+  # ------------------------------------------------------------
+  
+  cor_matrix <- cor(env_clean, method = "pearson")
+  
+  cor_matrix[lower.tri(cor_matrix)] <- NA
+  
+  addWorksheet(wb, paste0(sp, "_Correlation"))
+  writeData(wb, paste0(sp, "_Correlation"), cor_matrix)
+  
+  # ------------------------------------------------------------
+  # HEATMAP
+  # ------------------------------------------------------------
+  
+  cor_df <- as.data.frame(as.table(cor_matrix))
+  
+  cor_df <- cor_df[!is.na(cor_df$Freq), ]
+  
+  p <- ggplot(cor_df, aes(Var1, Var2, fill = Freq)) +
+    
+    geom_tile() +
+    
+    scale_fill_gradient2(
+      low = "#3B4CC0",
+      mid = "white",
+      high = "#B40426",
+      midpoint = 0,
+      limits = c(-1, 1),
+      name = "Pearson r"
+    ) +
+    
+    coord_fixed() +
+    
+    theme_minimal(base_size = 12) +
+    
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+      axis.text.y = element_text(size = 8),
+      axis.title = element_blank(),
+      panel.grid = element_blank(),
+      legend.position = "right",
+      plot.title = element_text(face = "bold", hjust = 0.5)
+    ) +
+    
+    labs(title = if(sp == "PTS") expression(italic("P. alchata"))
+         else expression(italic("P. orientalis")))
+  
+  plots_heatmap[[sp]] <- p
+  
+  # ------------------------------------------------------------
+  # VIF
+  # ------------------------------------------------------------
+  
+  vif_values <- vif(env_clean)
+  
+  vif_df <- data.frame(
+    Variable = vif_values$Variables,
+    VIF = vif_values$VIF
+  )
+  
+  addWorksheet(wb, paste0(sp, "_VIF"))
+  writeData(wb, paste0(sp, "_VIF"), vif_df)
+}
+
+# ------------------------------------------------------------
+# COMBINE HEATMAPS
+# ------------------------------------------------------------
+
+p_combined <- plots_heatmap[[1]] + plots_heatmap[[2]] +
+  plot_layout(ncol = 2)
+
+ggsave(
+  file.path(base_path, "Correlation_heatmaps_combined.png"),
+  p_combined,
+  width = 12,
+  height = 6,
+  dpi = 300,
+  bg = "white"
+)
+
+# ------------------------------------------------------------
+# Save Excel
+# ------------------------------------------------------------
+saveWorkbook(
+  wb,
+  file.path(base_path, "Correlation_VIF_Random.xlsx"),
+  overwrite = TRUE
+)
+
+cat("\nCorrelation and VIF analysis completed\n")
+
+
+############################################
+# Predictor–Response relationship
+# 2 species – Random pseudoabsences
+############################################
+
+# --- Load libraries ---
+library(dplyr)
+library(openxlsx)
+
+set.seed(123)
+
+# ------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------
+base_path <- "E:/TFM_gangas/GPS/ExtractedV.2"
+
+species_list <- c("PTS", "BBS")
+
+# ------------------------------------------------------------
+# Excel workbook
+# ------------------------------------------------------------
+wb <- createWorkbook()
+
+############################################
+# MAIN LOOP
+############################################
+
+for (sp in species_list) {
+  
+  cat("\n====================================\n")
+  cat("Species:", sp, "\n")
+  cat("====================================\n")
+  
+  # --- Load data ---
+  env <- read.csv(
+    file.path(base_path, paste0(sp, "_pseudoabsences_Random_env.csv"))
+  )
+  
+  # --- Prepare data ---
+  env <- env %>%
+    mutate(presence = factor(presence, levels = c(0, 1))) %>%
+    dplyr::select(
+      -birdID,
+      -date,
+      -species,
+      -X_25830,
+      -Y_25830
+    ) %>%
+    na.omit()
+  
+  # --- Keep only numeric predictors ---
+  predictors <- env %>%
+    dplyr::select(-presence)
+  
+  # ------------------------------------------------------------
+  # Compute summary statistics
+  # ------------------------------------------------------------
+  
+  summary_table <- data.frame(
+    Variable = names(predictors),
+    Mean_presence = NA,
+    SD_presence = NA,
+    Mean_absence = NA,
+    SD_absence = NA,
+    Difference_mean = NA
+  )
+  
+  for (i in seq_along(predictors)) {
+    
+    var_name <- names(predictors)[i]
+    
+    pres_vals <- predictors[[var_name]][env$presence == 1]
+    abs_vals  <- predictors[[var_name]][env$presence == 0]
+    
+    summary_table$Mean_presence[i]  <- mean(pres_vals)
+    summary_table$SD_presence[i]    <- sd(pres_vals)
+    summary_table$Mean_absence[i]   <- mean(abs_vals)
+    summary_table$SD_absence[i]     <- sd(abs_vals)
+    summary_table$Difference_mean[i] <- 
+      summary_table$Mean_presence[i] - summary_table$Mean_absence[i]
+  }
+  
+  # ------------------------------------------------------------
+  # Save sheet
+  # ------------------------------------------------------------
+  
+  addWorksheet(wb, sp)
+  writeData(wb, sp, summary_table)
+  
+  rm(env, predictors, summary_table)
+  gc()
+}
+
+# ------------------------------------------------------------
+# Save Excel
+# ------------------------------------------------------------
+saveWorkbook(
+  wb,
+  file.path(base_path, "Predictor_Response.xlsx"),
+  overwrite = TRUE
+)
+
+cat("\nFINISHED — Excel saved\n")
+
+
+
+############################################
+# Predictor–Response multipanel plots
+# FINAL VERSION
+############################################
+
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# ------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------
+base_path <- "E:/TFM_gangas/GPS/ExtractedV.2"
+
+species_list <- c("PTS", "BBS")
+
+# ------------------------------------------------------------
+# Variables to plot (FINAL SELECTION)
+# ------------------------------------------------------------
+vars_to_plot <- c(
+  "Altitude",
+  "Slope",
+  "Heterogeneity",
+  "NDVI",
+  "DistRoad",
+  "Tmean",
+  "LC_Forest",
+  "LC_AnnualCrops"
+)
+
+############################################
+# LOOP
+############################################
+
+for (sp in species_list) {
+  
+  cat("\nProcessing:", sp, "\n")
+  
+  # ------------------------------------------------------------
+  # Load data
+  # ------------------------------------------------------------
+  
+  env <- read.csv(
+    file.path(base_path, paste0(sp, "_pseudoabsences_Random_env.csv"))
+  )
+  
+  # ------------------------------------------------------------
+  # Prepare data
+  # ------------------------------------------------------------
+  
+  env <- env %>%
+    mutate(presence = factor(presence,
+                             levels = c(0,1),
+                             labels = c("Pseudoabsence","Presence"))) %>%
+    dplyr::select(
+      all_of(vars_to_plot),
+      presence
+    ) %>%
+    na.omit()
+  
+  # ------------------------------------------------------------
+  # Long format
+  # ------------------------------------------------------------
+  
+  env_long <- env %>%
+    pivot_longer(
+      cols = -presence,
+      names_to = "variable",
+      values_to = "value"
+    )
+  
+  # ------------------------------------------------------------
+  # Plot
+  # ------------------------------------------------------------
+  p <- ggplot(env_long, aes(x = value, fill = presence)) +
+    
+    geom_density(alpha = 0.5, color = NA) +
+    
+    facet_wrap(~variable, scales = "free", ncol = 4) +
+    
+    scale_fill_manual(
+      values = c(
+        "Pseudoabsence" = "#BDBDBD",
+        "Presence" = "#2C7FB8"
+      )
+    ) +
+    
+    theme_classic(base_size = 14) +
+    
+    theme(
+      legend.position = "top",
+      legend.title = element_blank(),
+      strip.text = element_text(face = "bold", size = 11),
+      axis.title = element_text(face = "bold"),
+      axis.text = element_text(color = "black"),
+      plot.title = element_text(face = "bold", hjust = 0.5, size = 14)
+    ) +
+    
+    labs(
+      title = paste("Predictor–response relationships -", sp),
+      subtitle = "Presence vs pseudoabsence distributions",
+      x = "Environmental gradient",
+      y = "Density"
+    )
+  # ------------------------------------------------------------
+  # Save
+  # ------------------------------------------------------------
+  
+  ggsave(
+    filename = paste0("Predictor_Response_", sp, ".png"),
+    plot = p,
+    path = base_path,
+    width = 12,
+    height = 8,
+    dpi = 300
+  )
+}
+
+cat("\n✅ Multipanel plots generated successfully\n")
+
+
+
+
+# ------------------------------------------------------------
+# MULTIPANEL PREDICTOR-RESPONSE (PTS + BBS)
+# ------------------------------------------------------------
+
+library(png)
+library(grid)
+library(gridExtra)
+
+# ------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------
+
+img_pts <- "E:/TFM_gangas/GPS/ExtractedV.2/Predictor_Response_PTS.png"
+img_bbs <- "E:/TFM_gangas/GPS/ExtractedV.2/Predictor_Response_BBS.png"
+
+out_file <- "E:/TFM_gangas/GPS/ExtractedV.2/Predictor_Response_multipanel.png"
+
+# ------------------------------------------------------------
+# LOAD IMAGES
+# ------------------------------------------------------------
+
+img1 <- readPNG(img_pts)
+img2 <- readPNG(img_bbs)
+
+g1 <- rasterGrob(img1, interpolate = TRUE)
+g2 <- rasterGrob(img2, interpolate = TRUE)
+
+# ------------------------------------------------------------
+# CREATE MULTIPANEL
+# ------------------------------------------------------------
+
+p <- grid.arrange(
+  g1, g2,
+  ncol = 1,
+  top = textGrob(
+    "Predictor-response relationships",
+    gp = gpar(fontsize = 16, fontface = "bold")
+  )
+)
+
+# ------------------------------------------------------------
+# SAVE
+# ------------------------------------------------------------
+
+png(out_file, width = 2000, height = 3000, res = 300)
+grid.arrange(
+  g1, g2,
+  ncol = 1,
+  top = textGrob(
+    "Predictor-response relationships",
+    gp = gpar(fontsize = 16, fontface = "bold")
+  )
+)
+dev.off()
+
+cat("\nMultipanel done\n")
+
+
+
+
+
+# ============================================================
+# COUNT DATASETS AND CREATE SUMMARY TABLES
+# ============================================================
+
+library(dplyr)
+library(openxlsx)
+
+# ------------------------------------------------------------
+# PATHS
+# ------------------------------------------------------------
+base_gps <- "E:/TFM_gangas/GPS"
+merged_path <- file.path(base_gps, "MergedV.2")
+
+# ------------------------------------------------------------
+# FUNCTION
+# ------------------------------------------------------------
+count_rows <- function(file){
+  nrow(read.csv(file))
+}
+
+# ============================================================
+# TABLE 1 — FILTERING AND MERGING
+# ============================================================
+
+# -------------------------------
+# 1. Original data
+# -------------------------------
+files_gps <- list.files(base_gps, pattern = "\\.csv$", full.names = TRUE)
+
+files_pts <- files_gps[grepl("PTS", files_gps)]
+files_bbs <- files_gps[grepl("BBS", files_gps)]
+
+n_pts_raw <- sum(sapply(files_pts, count_rows))
+n_bbs_raw <- sum(sapply(files_bbs, count_rows))
+
+# -------------------------------
+# 2. Subsampling
+# -------------------------------
+n_pts_sub <- count_rows(file.path(merged_path, "PTS_filtered_merged.csv"))
+n_bbs_sub <- count_rows(file.path(merged_path, "BBS_filtered_merged.csv"))
+
+# -------------------------------
+# 3. No pseudoreplication
+# -------------------------------
+n_pts_final <- count_rows(file.path(merged_path, "PTS_filtered_NoPseudoreplication.csv"))
+n_bbs_final <- count_rows(file.path(merged_path, "BBS_filtered_NoPseudoreplication.csv"))
+
+# -------------------------------
+# Table 1
+# -------------------------------
+table1 <- data.frame(
+  Stage = rep(c("Original", "Subsampling", "Final"), 2),
+  Species = rep(c("PTS","BBS"), each = 3),
+  Presences = c(n_pts_raw, n_pts_sub, n_pts_final,
+                n_bbs_raw, n_bbs_sub, n_bbs_final),
+  Total = c(n_pts_raw, n_pts_sub, n_pts_final,
+            n_bbs_raw, n_bbs_sub, n_bbs_final)
+)
+
+# ============================================================
+# TABLE 2 — PSEUDOABSENCES
+# ============================================================
+
+methods <- c("Random", "P95", "MCP40km")
+
+table2_list <- list()
+
+for(sp in c("PTS","BBS")){
+  
+  for(m in methods){
+    
+    file <- file.path(merged_path,
+                      paste0(sp, "_pseudoabsences_", m, ".csv"))
+    
+    df <- read.csv(file)
+    
+    n_pres <- sum(df$presence == 1)
+    n_abs  <- sum(df$presence == 0)
+    
+    table2_list[[paste(sp, m, sep="_")]] <- data.frame(
+      Method = m,
+      Species = sp,
+      Presences = n_pres,
+      Pseudoabsences = n_abs,
+      Total = n_pres + n_abs
+    )
+  }
+}
+
+table2 <- bind_rows(table2_list)
+
+# ============================================================
+# SAVE EXCEL
+# ============================================================
+
+wb <- createWorkbook()
+
+addWorksheet(wb, "Filter")
+writeData(wb, "Filter", table1)
+
+addWorksheet(wb, "Pseudoabsences")
+writeData(wb, "Pseudoabsences", table2)
+
+saveWorkbook(
+  wb,
+  file.path(base_gps, "COUNTING_DATA.xlsx"),
+  overwrite = TRUE
+)
+
+cat("\nTables finished\n")

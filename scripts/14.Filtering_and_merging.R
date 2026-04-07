@@ -1,5 +1,5 @@
 # =====================================================
-# REVIEW NEARET POINT TO EACH TARGET HOUR SCRIPT
+# REVIEW NEAREST POINT TO EACH TARGET HOUR SCRIPT
 # =====================================================
 
 library(data.table)
@@ -352,7 +352,7 @@ library(terra)
 
 # 1. Paths and input files
 
-base_path <- "E:/TFM_gangas/GPS/Merged"
+base_path <- "E:/TFM_gangas/GPS/MergedV.2"
 
 input_files <- list(
   BBS = file.path(base_path, "BBS_filtered_merged.csv"),
@@ -364,7 +364,7 @@ output_files <- list(
   PTS = file.path(base_path, "PTS_filtered_NoPseudoreplication.csv")
 )
 
-# NDVI folder (used as temporal reference)
+# NDVI folder 
 ndvi_path <- "E:/TFM_gangas/NDVI/SpainReprojected/300m"
 
 ndvi_files <- sort(list.files(ndvi_path, pattern = "\\.tif$", full.names = FALSE))
@@ -442,7 +442,7 @@ for (sp in names(input_files)) {
   # Collapse to unique environmental presences
   n_before <- nrow(dt)
   
-  dt_unique <- unique(dt, by = c("cell_id", "ten_days_id"))
+  dt_unique <- dt[, .SD[sample(.N, 1)], by = .(cell_id, ten_days_id)]
   
   n_after <- nrow(dt_unique)
   
@@ -494,3 +494,137 @@ for (sp in names(output_files)) {
     cat("⚠ WARNING: duplicates found\n")
   }
 }
+
+
+
+
+
+######################################################
+# Spatial distribution of GPS-tagged individuals 
+######################################################
+library(sf)
+library(ggplot2)
+library(dplyr)
+library(mapSpain)
+library(rnaturalearth)
+library(ggspatial)
+library(units)
+
+# =========================================
+# 1. IBERIA
+# =========================================
+provinces <- esp_get_prov()
+
+mask_spain <- provinces %>%
+  filter(!iso2.prov.name.es %in% c(
+    "Las Palmas", "Santa Cruz de Tenerife",
+    "Baleares", "Ceuta", "Melilla"
+  )) %>%
+  st_union()
+
+por <- ne_countries(
+  country = "Portugal",
+  scale = "medium",
+  returnclass = "sf"
+)
+
+por_polys <- st_cast(por, "POLYGON")
+
+por_cont <- por_polys %>%
+  mutate(area = st_area(.)) %>%
+  slice_max(area, n = 1) %>%
+  st_transform(st_crs(mask_spain)) %>%
+  st_union()
+
+iberia <- st_union(mask_spain, por_cont) %>%
+  st_transform(25830)
+
+# =========================================
+# 2. DATA
+# =========================================
+bbs <- read.csv("E:/TFM_gangas/GPS/ExtractedV.2/BBS_pseudoabsences_Random_env.csv")
+pts <- read.csv("E:/TFM_gangas/GPS/ExtractedV.2/PTS_pseudoabsences_Random_env.csv")
+
+bbs_sf <- st_as_sf(bbs, coords = c("X_25830", "Y_25830"), crs = 25830) %>%
+  filter(presence == 1) %>%
+  mutate(species = "P. orientalis")
+
+pts_sf <- st_as_sf(pts, coords = c("X_25830", "Y_25830"), crs = 25830) %>%
+  filter(presence == 1) %>%
+  mutate(species = "P. alchata")
+
+data_all <- bind_rows(bbs_sf, pts_sf)
+
+# =========================================
+# 3. PLOT
+# =========================================
+map_plot <- ggplot() +
+  geom_sf(data = iberia, fill = "grey90", color = NA) +
+  geom_sf(data = st_boundary(iberia), color = "grey10", linewidth = 0.4) +
+  
+  # Points
+  geom_sf(data = data_all, aes(color = species),
+          size = 0.7, alpha = 0.6) +
+  
+  scale_color_manual(values = c(
+    "P. orientalis" = "#1b9e77",
+    "P. alchata" = "#d95f02"
+  )) +
+  
+  # Scale
+  annotation_scale(
+    location = "bl",
+    width_hint = 0.4,
+    pad_x = unit(0, "cm"),
+    pad_y = unit(0, "cm"),
+    text_cex = 0.8
+  ) +
+  
+  # North arrow
+  annotation_north_arrow(
+    location = "tl",
+    which_north = "true",
+    style = north_arrow_nautical,
+    height = unit(1.3, "cm"),
+    width = unit(1.3, "cm"),
+    pad_x = unit(0, "cm"),
+    pad_y = unit(0.1, "cm")
+  ) +
+  
+  coord_sf(expand = TRUE) +
+  
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    
+    # Legend
+    legend.position = "right",
+    legend.title = element_text(face = "bold"),
+    legend.text = element_text(face = "italic"),
+    
+    plot.title = element_text(face = "bold"),
+    plot.margin = margin(10, 10, 10, 30)
+  ) +
+  
+  labs(
+    title = "Capture and tagging locations of sandgrouse in the Iberian Peninsula",
+    subtitle = "Spatial coverage across main population areas",
+    color = "Species"
+  )
+
+# Show
+map_plot
+
+# =========================================
+# EXPORT
+# =========================================
+ggsave(
+  "E:/TFM_gangas/distribution_map_panel_B.png",
+  plot = map_plot,
+  width = 8,
+  height = 6,
+  dpi = 300,
+  bg = "white"
+)

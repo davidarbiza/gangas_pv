@@ -7,28 +7,27 @@ library(terra)
 # -----------------------
 # PATHS
 # -----------------------
-base_folder <- "E:/TFM_gangas/LULUCF/"
-lulucf_files <- c("LULUCF2015_PB.tif", "LULUCF2018_PB.tif", "LULUCF2021_PB.tif")
+base_folder <- "E:/TFM_gangas/UsosSuelo/LULUCF"
+lulucf_files <- c("/Originales/LULUCF2015_PB.tif", "/Originales/LULUCF2018_PB.tif", "/Originales/LULUCF2021_PB.tif")
 
 # -----------------------
 # FINAL CLASS VALUES
 # -----------------------
 classes <- c(
   "Bosques" = 1,
-  "Olivares" = 2,
-  "Viñedos" = 3,
-  "Otros cultivos perennes" = 4,
-  "Arrozales" = 5,
-  "Invernaderos" = 6,
-  "Cultivos anuales" = 7,
-  "Pastizales con árboles" = 8,
-  "Pastizales arbustivos" = 9,
-  "Pastizales herbáceos" = 10,
-  "Zonas acuáticas" = 11,
-  "Marismas" = 12,
-  "Áreas artificiales" = 13,
-  "Otras tierras" = 14,
-  "Mosaico de cultivos complejos" = 15
+  "Viñedos" = 2,
+  "Otros cultivos permanentes" = 3,
+  "Arrozales" = 4,
+  "Invernaderos" = 5,
+  "Cultivos anuales" = 6,
+  "Pastizales con árboles" = 7,
+  "Pastizales arbustivos" = 8,
+  "Pastizales herbáceos" = 9,
+  "Zonas acuáticas" = 10,
+  "Marismas" = 11,
+  "Áreas artificiales" = 12,
+  "Otras tierras" = 13,
+  "Mosaico de cultivos complejos" = 14
 )
 
 class_table <- data.frame(value = unname(classes), class = names(classes))
@@ -53,12 +52,12 @@ lulucf_matrix <- matrix(c(
   142,142,classes["Bosques"],
   
   # Cultivos perennes
-  711,711,classes["Olivares"],
+  711,711,classes["Otros cultivos permanentes"],
   712,712,classes["Viñedos"],
-  713,713,classes["Otros cultivos perennes"],
-  714,714,classes["Otros cultivos perennes"],
+  713,713,classes["Otros cultivos permanentes"],
+  714,714,classes["Otros cultivos permanentes"],
   715,715,classes["Mosaico de cultivos complejos"],
-  719,719,classes["Otros cultivos perennes"],
+  719,719,classes["Otros cultivos permanentes"],
   
   # Cultivos anuales / arrozales / invernaderos
   721,721,classes["Arrozales"],
@@ -143,19 +142,154 @@ for (f in lulucf_files) {
 
 
 
-################################ 
-# COS PORTUGAL RECLASS SCRIPT
-################################
+
+############################################
+# LULUCF PROPORTIONAL LAND COVER (NDVI GRID)
+############################################
+
+library(terra)
 
 # -----------------------
 # PATHS
 # -----------------------
-base_folder <- "E:/TFM_gangas/LULUCF/"
-portugal_file <- "COS2023v1-S2.gpkg"
+base_dir <- "E:/TFM_gangas/UsosSuelo/LULUCF/"
+ndvi_template_file <- "E:/TFM_gangas/NDVI/SpainReprojected/c_gls_NDVI300_201601010000_GLOBE_PROBAV_V1.0.1_25830.tif"
 
+out_dir <- file.path(base_dir, "300m")
+dir.create(out_dir, showWarnings = FALSE)
 
 # -----------------------
-# PORTUGAL CLASS TABLE (Nível 4)
+# INPUT FILES
+# -----------------------
+lulucf_files <- c(
+  "LULUCF2015_PB_Reclass.tif",
+  "LULUCF2018_PB_Reclass.tif",
+  "LULUCF2021_PB_Reclass.tif"
+)
+
+# -----------------------
+# CLASS DEFINITIONS
+# -----------------------
+classes <- c(
+  "Bosques" = 1,
+  "Viñedos" = 2,
+  "Otros cultivos permanentes" = 3,
+  "Arrozales" = 4,
+  "Invernaderos" = 5,
+  "Cultivos anuales" = 6,
+  "Pastizales con árboles" = 7,
+  "Pastizales arbustivos" = 8,
+  "Pastizales herbáceos" = 9,
+  "Zonas acuáticas" = 10,
+  "Marismas" = 11,
+  "Áreas artificiales" = 12,
+  "Otras tierras" = 13,
+  "Mosaico de cultivos complejos" = 14
+)
+
+# -----------------------
+# LOAD NDVI TEMPLATE
+# -----------------------
+ndvi_template <- rast(ndvi_template_file)
+
+# -----------------------
+# PROCESS EACH YEAR
+# -----------------------
+for (f in lulucf_files) {
+  
+  cat("\nProcessing", f, "...\n")
+  
+  r <- rast(file.path(base_dir, f))
+  fact <- 300 / res(r)[1]
+  
+  lc_stack <- rast()
+  
+  for (i in seq_along(classes)) {
+    
+    class_name <- names(classes)[i]
+    class_val  <- unname(classes[i])
+    
+    cat("  →", class_name, "\n")
+    
+    r_bin <- r == class_val
+    
+    r_prop <- aggregate(
+      r_bin,
+      fact = fact,
+      fun = mean,
+      na.rm = TRUE
+    )
+    
+    names(r_prop) <- paste0("LC_", gsub(" ", "_", class_name))
+    
+    lc_stack <- c(lc_stack, r_prop)
+    
+    rm(r_bin, r_prop); gc()
+  }
+  
+  # -----------------------
+  # ALIGN TO NDVI GRID
+  # -----------------------
+  lc_stack <- resample(
+    lc_stack,
+    ndvi_template,
+    method = "bilinear"
+  )
+  
+  year_tag <- gsub(".*(2015|2018|2021).*", "\\1", f)
+  out_file <- file.path(out_dir, paste0("LULUCF_LC_", year_tag, "_300m.tif"))
+  
+  writeRaster(lc_stack, out_file, overwrite = TRUE)
+  cat("Saved:", out_file, "\n")
+  
+  rm(r, lc_stack); gc()
+}
+
+cat("\n✅ LULUCF processing completed.\n")
+
+
+
+
+
+
+############################################
+# COS2023 PROPORTIONAL LAND COVER (NDVI GRID)
+############################################
+
+library(terra)
+
+# -----------------------
+# PATHS
+# -----------------------
+base_dir <- "E:/TFM_gangas/UsosSuelo/COS2023/"
+gpkg_file <- file.path(base_dir, "Originales/COS2023v1-S2.gpkg")
+ndvi_template_file <- "E:/TFM_gangas/NDVI/SpainReprojected/c_gls_NDVI300_201601010000_GLOBE_PROBAV_V1.0.1_25830.tif"
+
+out_dir <- file.path(base_dir, "300m")
+dir.create(out_dir, showWarnings = FALSE)
+
+# -----------------------
+# CLASS DEFINITIONS
+# -----------------------
+classes <- c(
+  "Bosques" = 1,
+  "Viñedos" = 2,
+  "Otros cultivos permanentes" = 3,
+  "Arrozales" = 4,
+  "Invernaderos" = 5,
+  "Cultivos anuales" = 6,
+  "Pastizales con árboles" = 7,
+  "Pastizales arbustivos" = 8,
+  "Pastizales herbáceos" = 9,
+  "Zonas acuáticas" = 10,
+  "Marismas" = 11,
+  "Áreas artificiales" = 12,
+  "Otras tierras" = 13,
+  "Mosaico de cultivos complejos" = 14
+)
+
+# -----------------------
+# PORTUGAL CLASS TABLE
 # -----------------------
 pt_table <- data.frame(
   code = c(
@@ -174,7 +308,7 @@ pt_table <- data.frame(
     "9.1.2.2","9.1.2.3","9.1.2.4","9.1.2.5","9.2.1.1","9.3.1.1","9.3.2.1",
     "9.3.3.1","9.3.4.1"
   ),
-  class <- c(
+  class = c(
     "Áreas artificiales","Áreas artificiales","Áreas artificiales","Áreas artificiales",
     "Áreas artificiales","Áreas artificiales","Áreas artificiales","Áreas artificiales",
     "Áreas artificiales","Áreas artificiales","Áreas artificiales","Áreas artificiales",
@@ -185,7 +319,7 @@ pt_table <- data.frame(
     "Áreas artificiales","Áreas artificiales","Áreas artificiales","Áreas artificiales",
     "Áreas artificiales","Áreas artificiales","Otras tierras","Áreas artificiales",
     "Áreas artificiales","Cultivos anuales","Arrozales","Viñedos",
-    "Otros cultivos perennes","Olivares","Mosaico de cultivos complejos","Mosaico de cultivos complejos",
+    "Otros cultivos permanentes","Otros cultivos permanentes","Mosaico de cultivos complejos","Mosaico de cultivos complejos",
     "Mosaico de cultivos complejos","Mosaico de cultivos complejos","Mosaico de cultivos complejos","Invernaderos",
     "Pastizales herbáceos","Pastizales herbáceos","Bosques","Bosques","Bosques","Bosques",
     "Bosques","Bosques","Pastizales con árboles","Pastizales con árboles",
@@ -196,39 +330,136 @@ pt_table <- data.frame(
     "Zonas acuáticas","Marismas","Marismas","Zonas acuáticas",
     "Zonas acuáticas","Zonas acuáticas","Zonas acuáticas","Zonas acuáticas",
     "Zonas acuáticas","Zonas acuáticas","Zonas acuáticas","Zonas acuáticas",
-    "Zonas acuáticas","Zonas acuáticas", "Zonas acuáticas"
+    "Zonas acuáticas","Zonas acuáticas","Zonas acuáticas"
   )
-  
 )
 
 # -----------------------
-# PROCESS PORTUGAL VECTOR
+# LOAD NDVI TEMPLATE
 # -----------------------
-cat("Processing Portugal layer...\n")
+ndvi_template <- rast(ndvi_template_file)
 
-v <- vect(paste0(base_folder, portugal_file))
+# -----------------------
+# LOAD AND RECLASSIFY VECTOR
+# -----------------------
+v <- vect(gpkg_file)
 v$class_name <- pt_table$class[match(v$COS23_n4_C, pt_table$code)]
 v$class_val  <- unname(classes[v$class_name])
-v_proj <- project(v, "EPSG:25830")
+v <- project(v, "EPSG:25830")
 
-r_template <- rast(ext(v_proj), resolution=300, crs="EPSG:25830")
-r_pt <- rasterize(v_proj, r_template, field="class_val", touches=TRUE)
+# -----------------------
+# RASTERIZE AT FINE RESOLUTION
+# -----------------------
+fine_res <- 25
+r_fine <- rast(ext(v), resolution = fine_res, crs = "EPSG:25830")
 
-levels(r_pt) <- class_table
+r_cos <- rasterize(v, r_fine, field = "class_val", touches = TRUE)
+
+rm(v, r_fine); gc()
+
+# -----------------------
+# PROPORTIONS + ALIGNMENT
+# -----------------------
+fact <- 300 / fine_res
+lc_stack <- rast()
+
+for (i in seq_along(classes)) {
+  
+  class_name <- names(classes)[i]
+  class_val  <- unname(classes[i])
+  
+  cat("  →", class_name, "\n")
+  
+  r_bin <- r_cos == class_val
+  
+  r_prop <- aggregate(
+    r_bin,
+    fact = fact,
+    fun = mean,
+    na.rm = TRUE
+  )
+  
+  names(r_prop) <- paste0("LC_", gsub(" ", "_", class_name))
+  
+  lc_stack <- c(lc_stack, r_prop)
+  
+  rm(r_bin, r_prop); gc()
+}
+
+rm(r_cos); gc()
+
+lc_stack <- resample(
+  lc_stack,
+  ndvi_template,
+  method = "bilinear"
+)
+
+out_file <- file.path(out_dir, "COS2023_LC_300m.tif")
+writeRaster(lc_stack, out_file, overwrite = TRUE)
+
+cat("Saved:", out_file, "\n")
+cat("\n✅ COS2023 processing completed.\n")
 
 
-out_name <- paste0(base_folder, "COS2023v1-S2_Reclass.tif")
-writeRaster(r_pt, out_name, overwrite=TRUE)
-
-rm(v, v_proj, r_pt, r_template); gc()
-
-cat("Portugal raster saved:", out_name, "\n")
-cat("All processes completed successfully!\n")
 
 
 
 
 
+################################ 
+# LC FREQUENCY CHECK
+################################
+library(dplyr)
+library(openxlsx)
+
+# ------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------
+base_path <- "E:/TFM_gangas/GPS/Extracted"
+
+files <- list(
+  PTS = file.path(base_path, "PTS_pseudoabsences_Random_env.csv"),
+  BBS = file.path(base_path, "BBS_pseudoabsences_Random_env.csv")
+)
+
+# ------------------------------------------------------------
+# Create workbook
+# ------------------------------------------------------------
+wb <- createWorkbook()
+
+# ------------------------------------------------------------
+# Loop species
+# ------------------------------------------------------------
+for(sp in names(files)) {
+  
+  cat("\nProcessing:", sp, "\n")
+  
+  env <- read.csv(files[[sp]])
+  
+  lc_cols <- grep("^LC_", names(env), value = TRUE)
+  
+  lc_summary <- data.frame(
+    Variable = lc_cols,
+    Prop_nonzero = sapply(env[, lc_cols], function(x) mean(x > 0, na.rm = TRUE)),
+    Mean = sapply(env[, lc_cols], function(x) mean(x, na.rm = TRUE)),
+    SD   = sapply(env[, lc_cols], function(x) sd(x, na.rm = TRUE))
+  )
+  
+  # Add worksheet
+  addWorksheet(wb, paste0(sp, "_Random"))
+  writeData(wb, paste0(sp, "_Random"), lc_summary)
+}
+
+# ------------------------------------------------------------
+# Save Excel
+# ------------------------------------------------------------
+saveWorkbook(
+  wb,
+  file.path(base_path, "LC_frequency_Random.xlsx"),
+  overwrite = TRUE
+)
+
+cat("\nLC frequency Excel saved successfully\n")
 
 
 
@@ -274,6 +505,7 @@ reprojected_file <- paste0(base_folder, "CLC2018_PB.tif")
 writeRaster(r_25830, reprojected_file, overwrite=TRUE)
 
 cat("Reprojected raster saved:", reprojected_file, "\n")
+
 
 
 
@@ -376,7 +608,7 @@ check_reclass <- function(path) {
   print(values_present)
   
   # Expected class system
-  expected <- c(1:16, 999)
+  expected <- c(1:15, 999)
   
   missing <- setdiff(expected, values_present)
   extra   <- setdiff(values_present, expected)
@@ -412,20 +644,18 @@ check_reclass <- function(path) {
   cat("==============================\n")
 }
 
-base <- "E:/TFM_gangas/LULUCF/"
+base <- "E:/TFM_gangas/UsosSuelo/"
 
 files <- c(
-  "LULUCF2015_PB_Reclass.tif",
-  "LULUCF2018_PB_Reclass.tif",
-  "LULUCF2021_PB_Reclass.tif",
-  "COS2023v1-S2_Reclass.tif",
-  "CLC2018/CLC2018_PB_Reclass.tif"
+  "LULUCF/300m/LULUCF2015_300m.tif",
+  "LULUCF/300m/LULUCF2018_300m.tif",
+  "LULUCF/300m/LULUCF2021_300m.tif",
+  "COS2023/300m/COS2023v1-S2_300m.tif"
 )
 
 for (f in files) {
   check_reclass(paste0(base, f))
 }
-
 
 
 
@@ -549,4 +779,6 @@ for (name in names(files)) {
 out_excel <- paste0(base_folder, "Class_percentage_Aligned.xlsx")
 saveWorkbook(wb, out_excel, overwrite=TRUE)
 cat("Class percentages saved in Excel:\n", out_excel, "\n")
+
+
 

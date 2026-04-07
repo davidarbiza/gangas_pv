@@ -70,6 +70,7 @@ resample_to_300m <- function(input_file, output_dir, method = "bilinear") {
 climatic_vars <- list(
   Tmin = c("10_days", "Monthly"),
   Tmax = c("10_days", "Monthly"),
+  Tmean = c("10_days"),
   Prcp = c("10_days", "Monthly")
 )
 
@@ -80,9 +81,7 @@ datasets <- list(
   HumanFootprint = "bilinear",
   NDVI = "bilinear",
   Topograficas = "bilinear",
-  Heterogeneidad = "bilinear",
-  LULUCF = "near",
-  COS2023 ="near"
+  Heterogeneidad = "bilinear"
 )
 
 # =============================
@@ -210,3 +209,13 @@ if(misaligned_count > 0){
   cat("List of misaligned rasters:\n")
   print(raster_df$file[!raster_df$aligned])
 }
+
+
+
+
+
+
+
+
+
+
