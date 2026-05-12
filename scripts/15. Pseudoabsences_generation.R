@@ -14,7 +14,6 @@ library(tidyverse)
 library(mapSpain)
 library(rnaturalearth)
 
-# 2. Clean environment
 rm(list = ls())
 gc()
 
@@ -112,7 +111,7 @@ pts_final <- bind_rows(pts_data, pts_pseudo)
 
 # 11. Quick plot check (pseudo-absences only)
 x11()
-plot(iberia_mask, col = "lightgrey", main = "BBS pseudo-absences")
+plot(iberia_mask, col = "lightgrey", main = " BBS pseudo-absences")
 points(bbs_pseudo$X_25830,
        bbs_pseudo$Y_25830,
        col = "red", pch = 20, cex = 0.1)
@@ -134,7 +133,7 @@ cat("Done! Pseudo-absences generated and saved.\n")
 
 
 # --------------------------------
-# PSEUDO-ABSENCES – P95 METHOD
+# PSEUDO-ABSENCES – P95 METHOD (DECAY)
 # --------------------------------
 
 library(sf)
@@ -146,7 +145,7 @@ library(mapSpain)
 library(rnaturalearth)
 
 rm(list = ls())
-gc
+gc()
 
 set.seed(12345)
 
@@ -178,55 +177,58 @@ iberia_mask <- st_union(mask_spain, por_cont)
 iberia_mask <- st_transform(iberia_mask, 25830)
 iberia_sp <- as(iberia_mask, "Spatial")
 
-# Base raster (300 m)
+# Base raster
 base_raster <- raster(extent(iberia_sp), res = 300)
 base_raster[] <- 1
 base_raster <- mask(base_raster, iberia_sp)
 
-# P95 values
-d95_values <- tibble(
-  species = c("BBS","PTS"),
-  d95 = c(7320, 5317)
-)
-
-# -----------------------------------------
-# Function to build accessible area (P95)
-# -----------------------------------------
+# Build accessible area
 build_p95_area <- function(sf_data, d95){
-  
   ids <- unique(sf_data$birdID)
-  
   buffers <- lapply(ids, function(id){
     ind_pts <- sf_data[sf_data$birdID == id, ]
     st_union(st_buffer(ind_pts, dist = d95))
   })
-  
   area <- do.call(c, buffers)
   area <- st_intersection(area, iberia_mask)
-  
-  # minimum distance exclusion (300 m)
   min_buf <- st_union(st_buffer(sf_data, 300))
-  area <- st_difference(area, min_buf)
-  
-  return(area)
+  st_difference(area, min_buf)
 }
 
-# Build areas
-bbs_area <- build_p95_area(bbs_sf, d95_values$d95[d95_values$species=="BBS"])
-pts_area <- build_p95_area(pts_sf, d95_values$d95[d95_values$species=="PTS"])
+bbs_area <- build_p95_area(bbs_sf, 7320)
+pts_area <- build_p95_area(pts_sf, 5317)
 
-# Rasterize areas
-bbs_raster <- rasterize(as(bbs_area, "Spatial"), base_raster, field = 1, background = NA)
-pts_raster <- rasterize(as(pts_area, "Spatial"), base_raster, field = 1, background = NA)
+# --------------------------------
+# CREATE DECAY RASTER
+# --------------------------------
+create_decay_raster <- function(area_sf, lambda){
+  
+  area_raster <- rasterize(as(area_sf, "Spatial"),
+                           base_raster,
+                           field = 1,
+                           background = NA)
+  
+  dist_raster <- distance(area_raster)
+  
+  decay_raster <- exp(-dist_raster / lambda)
+  
+  decay_raster <- mask(decay_raster, base_raster)
+  
+  return(decay_raster)
+}
 
-# -------------------------
-# Generate pseudo-absences
-# -------------------------
-generate_pseudoabsences <- function(presences, area_raster, n_per_presence = 4){
+bbs_decay <- create_decay_raster(bbs_area, 7320)
+pts_decay <- create_decay_raster(pts_area, 5317)
+
+# Generate pseudoabsences
+generate_pseudoabsences <- function(presences, prob_raster, n_per_presence = 5){
   
   total_n <- nrow(presences) * n_per_presence
   
-  pts <- randomPoints(area_raster, n = total_n, warn = 0)
+  pts <- randomPoints(prob_raster,
+                      n = total_n,
+                      prob = TRUE,
+                      warn = 0)
   
   tibble(
     birdID   = NA,
@@ -238,8 +240,8 @@ generate_pseudoabsences <- function(presences, area_raster, n_per_presence = 4){
   )
 }
 
-bbs_pseudo <- generate_pseudoabsences(bbs_data, bbs_raster, 4)
-pts_pseudo <- generate_pseudoabsences(pts_data, pts_raster, 4)
+bbs_pseudo <- generate_pseudoabsences(bbs_data, bbs_decay, 5)
+pts_pseudo <- generate_pseudoabsences(pts_data, pts_decay, 5)
 
 # Combine
 bbs_data$presence <- 1
@@ -248,24 +250,18 @@ pts_data$presence <- 1
 bbs_final <- bind_rows(bbs_data, bbs_pseudo)
 pts_final <- bind_rows(pts_data, pts_pseudo)
 
-# -------------------------
-# Quick plot check
-# -------------------------
+# Plot
 x11()
-plot(iberia_mask, col = "lightgrey", main = "BBS pseudo-absences (P95)")
-points(bbs_pseudo$X_25830,
-       bbs_pseudo$Y_25830,
-       col = "red", pch = 20, cex = 0.1)
+plot(iberia_mask, col = "lightgrey")
+points(bbs_pseudo$X_25830, bbs_pseudo$Y_25830, col = "red", pch = 20, cex = 0.1)
 
 x11()
-plot(iberia_mask, col = "lightgrey", main = "PTS pseudo-absences (P95)")
-points(pts_pseudo$X_25830,
-       pts_pseudo$Y_25830,
-       col = "red", pch = 20, cex = 0.1)
+plot(iberia_mask, col = "lightgrey")
+points(pts_pseudo$X_25830, pts_pseudo$Y_25830, col = "red", pch = 20, cex = 0.1)
 
 # Save
-write_csv(bbs_final, "E:/TFM_gangas/GPS/MergedV.2/BBS_pseudoabsences_P95.csv")
-write_csv(pts_final, "E:/TFM_gangas/GPS/MergedV.2/PTS_pseudoabsences_P95.csv")
+write_csv(bbs_final, "E:/TFM_gangas/GPS/MergedV.2/BBS_pseudoabsences_P95_decay.csv")
+write_csv(pts_final, "E:/TFM_gangas/GPS/MergedV.2/PTS_pseudoabsences_P95_decay.csv")
 
 cat("Done! P95 pseudo-absences generated.\n")
 
@@ -273,10 +269,8 @@ cat("Done! P95 pseudo-absences generated.\n")
 
 
 
-
-
 # ---------------------------------------------
-# PSEUDOABSENCES – MCP 40 km METHOD
+# PSEUDOABSENCES – MCP 40 km METHOD (DECAY)
 # ---------------------------------------------
 
 library(sf)
@@ -303,7 +297,7 @@ pts_data <- read_csv(pts_file)
 bbs_sf <- st_as_sf(bbs_data, coords = c("X_25830","Y_25830"), crs = 25830)
 pts_sf <- st_as_sf(pts_data, coords = c("X_25830","Y_25830"), crs = 25830)
 
-# Iberian Peninsula mask
+# Iberia mask
 provinces <- esp_get_prov()
 provinces <- provinces[!provinces$iso2.prov.name.es %in%
                          c("Las Palmas","Santa Cruz de Tenerife",
@@ -320,68 +314,75 @@ iberia_mask <- st_union(mask_spain, por_cont)
 iberia_mask <- st_transform(iberia_mask, 25830)
 iberia_sp <- as(iberia_mask, "Spatial")
 
-# Base raster (300 m)
+# Base raster
 base_raster <- raster(extent(iberia_sp), res = 300)
 base_raster[] <- 1
 base_raster <- mask(base_raster, iberia_sp)
 
-# Build accessible area: MCP per individual + 40 km
+# MCP area
 build_mcp40_area <- function(sf_data, max_dist = 40000, min_dist = 600){
   
   ids <- unique(sf_data$birdID)
   
   patches <- lapply(ids, function(id){
-    
     ind_pts <- sf_data[sf_data$birdID == id, ]
     if(nrow(ind_pts) < 3) return(NULL)
-    
     mcp <- st_convex_hull(st_union(ind_pts))
     area <- st_buffer(mcp, dist = max_dist)
-    
-    # minimum distance exclusion
     min_buf <- st_union(st_buffer(ind_pts, min_dist))
-    area <- st_difference(area, min_buf)
-    
-    area
+    st_difference(area, min_buf)
   })
   
-  # Join MCPs + buffer 40km
   area <- do.call(c, patches)
-  
-  # Mask Iberia
-  area <- st_intersection(area, iberia_mask)
-  
-  return(area)
+  st_intersection(area, iberia_mask)
 }
 
 bbs_area <- build_mcp40_area(bbs_sf, 40000)
 pts_area <- build_mcp40_area(pts_sf, 40000)
 
-# Rasterize areas
-bbs_raster <- rasterize(as(bbs_area,"Spatial"), base_raster, field = 1, background = NA)
-pts_raster <- rasterize(as(pts_area,"Spatial"), base_raster, field = 1, background = NA)
+# --------------------------------
+# CREATE DECAY RASTER
+# --------------------------------
+create_decay_raster <- function(area_sf, lambda){
+  
+  area_raster <- rasterize(as(area_sf, "Spatial"),
+                           base_raster,
+                           field = 1,
+                           background = NA)
+  
+  dist_raster <- distance(area_raster)
+  
+  decay_raster <- exp(-dist_raster / lambda)
+  decay_raster <- mask(decay_raster, base_raster)
+  
+  return(decay_raster)
+}
 
-# Generate pseudo-absences
-generate_pseudoabsences <- function(presences, area_raster, n_per_presence = 5){
+bbs_decay <- create_decay_raster(bbs_area, 40000)
+pts_decay <- create_decay_raster(pts_area, 40000)
+
+# Generate pseudoabsences
+generate_pseudoabsences <- function(presences, prob_raster, n_per_presence = 5){
   
   total_n <- nrow(presences) * n_per_presence
   
-  pts <- randomPoints(area_raster, n = total_n, warn = 0)
-  
-  n_gen <- nrow(pts)
+  pts <- randomPoints(prob_raster,
+                      n = total_n,
+                      prob = TRUE,
+                      warn = 0)
   
   tibble(
     birdID   = NA,
-    species  = rep(presences$species, length.out = n_gen),
-    date     = rep(presences$date, length.out = n_gen),
+    species  = rep(presences$species, each = n_per_presence),
+    date     = rep(presences$date, each = n_per_presence),
     X_25830  = pts[,1],
     Y_25830  = pts[,2],
     presence = 0
   )
 }
 
-bbs_pseudo <- generate_pseudoabsences(bbs_data, bbs_raster, 5)
-pts_pseudo <- generate_pseudoabsences(pts_data, pts_raster, 5)
+bbs_pseudo <- generate_pseudoabsences(bbs_data, bbs_decay, 5)
+pts_pseudo <- generate_pseudoabsences(pts_data, pts_decay, 5)
 
 # Combine
 bbs_data$presence <- 1
@@ -390,104 +391,17 @@ pts_data$presence <- 1
 bbs_final <- bind_rows(bbs_data, bbs_pseudo)
 pts_final <- bind_rows(pts_data, pts_pseudo)
 
-# -------------------------------------------------
-# Quick visual check
-# -------------------------------------------------
+# Plot
 x11()
-plot(iberia_mask, col = "lightgrey", main = "BBS pseudo-absences (MCP + 40 km)")
-points(bbs_pseudo$X_25830,
-       bbs_pseudo$Y_25830,
-       col = "red", pch = 20, cex = 0.1)
+plot(iberia_mask, col = "lightgrey")
+points(bbs_pseudo$X_25830, bbs_pseudo$Y_25830, col = "red", pch = 20, cex = 0.1)
 
 x11()
-plot(iberia_mask, col = "lightgrey", main = "PTS pseudo-absences (MCP + 40 km)")
-points(pts_pseudo$X_25830,
-       pts_pseudo$Y_25830,
-       col = "red", pch = 20, cex = 0.1)
+plot(iberia_mask, col = "lightgrey")
+points(pts_pseudo$X_25830, pts_pseudo$Y_25830, col = "red", pch = 20, cex = 0.1)
 
 # Save
-write_csv(bbs_final, "E:/TFM_gangas/GPS/MergedV.2/BBS_pseudoabsences_MCP40km.csv")
-write_csv(pts_final, "E:/TFM_gangas/GPS/MergedV.2/PTS_pseudoabsences_MCP40km.csv")
+write_csv(bbs_final, "E:/TFM_gangas/GPS/MergedV.2/BBS_pseudoabsences_MCP40_decay.csv")
+write_csv(pts_final, "E:/TFM_gangas/GPS/MergedV.2/PTS_pseudoabsences_MCP40_decay.csv")
 
 cat("Done! MCP + 40 km pseudo-absences generated.\n")
-
-
-
-
-
-
-
-
-
-
-# ==========================================
-# CHECK SPATIAL DISTRIBUTION OF PSEUDOABSENCES
-# ==========================================
-
-library(data.table)
-library(terra)
-
-# -------------------------
-# PATHS
-# -------------------------
-base_path <- "E:/TFM_gangas/GPS/MergedV.2"
-
-files <- list(
-  Random_BBS = file.path(base_path, "BBS_pseudoabsences_Random.csv"),
-  Random_PTS = file.path(base_path, "PTS_pseudoabsences_Random.csv"),
-  
-  P95_BBS    = file.path(base_path, "BBS_pseudoabsences_P95.csv"),
-  P95_PTS    = file.path(base_path, "PTS_pseudoabsences_P95.csv"),
-  
-  MCP_BBS    = file.path(base_path, "BBS_pseudoabsences_MCP40km.csv"),
-  MCP_PTS    = file.path(base_path, "PTS_pseudoabsences_MCP40km.csv")
-)
-
-# NDVI reference raster (para cell_id)
-ndvi_path <- "E:/TFM_gangas/NDVI/SpainReprojected/300m"
-ndvi_file <- list.files(ndvi_path, pattern = "\\.tif$", full.names = TRUE)[1]
-ndvi_ref <- rast(ndvi_file)
-
-# -------------------------
-# LOOP
-# -------------------------
-for(name in names(files)){
-  
-  cat("\n====================================\n")
-  cat("CHECKING:", name, "\n")
-  cat("====================================\n")
-  
-  dt <- fread(files[[name]])
-  
-  # Solo pseudoausencias
-  dt <- dt[presence == 0]
-  
-  cat("Total pseudoabsences:", nrow(dt), "\n")
-  
-  # Crear cell_id
-  coords <- as.matrix(dt[, .(X_25830, Y_25830)])
-  dt[, cell_id := cellFromXY(ndvi_ref, coords)]
-  
-  # Conteo por celda
-  cell_counts <- dt[, .N, by = cell_id]
-  
-  cat("\n--- Distribution of points per cell ---\n")
-  print(summary(cell_counts$N))
-  
-  cat("\n--- Frequency table (how many cells have X points) ---\n")
-  print(table(cell_counts$N))
-  
-  # Máximo
-  cat("\nMax points in a single cell:", max(cell_counts$N), "\n")
-  
-  # Celdas con muchos puntos (umbral arbitrario)
-  high_density <- cell_counts[N >= 10]
-  
-  cat("\nCells with >=10 points:", nrow(high_density), "\n")
-  
-  if(nrow(high_density) > 0){
-    cat("⚠ WARNING: high clustering detected\n")
-  } else {
-    cat("✔ OK: no strong clustering\n")
-  }
-}

@@ -39,7 +39,7 @@ process_sub <- function(sub, quad_id, r_res, sub_size, buffer_m, na_fill, output
   
   # Handle empty / invalid road geometries
   if (is.null(roads_buff) || nrow(roads_buff) == 0 || all(is.na(geom(roads_buff)))) {
-    cat("   ⚠️ No valid roads found in buffer — filling with constant distance.\n")
+    cat(" No valid roads found in buffer — filling with constant distance.\n")
     
     dist_r <- rast(ext(sub_v), res = r_res, crs = crs(roads))
     values(dist_r) <- na_fill
@@ -77,7 +77,7 @@ if (length(existing_files) == 0) {
 
 # Main loop over quadrants
 for (q in seq(nrow(quads))) {
-  cat("\n🚧 Processing quadrant", q, "of", nrow(quads), "...\n")
+  cat("\nProcessing quadrant", q, "of", nrow(quads), "...\n")
   
   sub_tmp <- st_make_grid(quads[q, ], cellsize = sub_size, what = "polygons")
   subgrid <- st_sf(geometry = sub_tmp, sub_id = 1:length(sub_tmp))
@@ -89,11 +89,11 @@ for (q in seq(nrow(quads))) {
   }
   
   if (nrow(subgrid) == 0) {
-    cat("✅ Quadrant", q, "already complete. Skipping...\n")
+    cat("Quadrant", q, "already complete. Skipping...\n")
     next
   }
   
-  cat("🟢 Remaining subquadrants:", nrow(subgrid), "\n")
+  cat("Remaining subquadrants:", nrow(subgrid), "\n")
   
   # Sequential processing for stability
   for (i in 1:nrow(subgrid)) {
@@ -102,5 +102,5 @@ for (q in seq(nrow(quads))) {
   }
 }
 
-cat("\n✅ All quadrants processed successfully.\n")
+cat("\nAll quadrants processed successfully.\n")
 

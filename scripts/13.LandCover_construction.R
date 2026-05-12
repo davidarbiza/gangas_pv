@@ -245,7 +245,7 @@ for (f in lulucf_files) {
   rm(r, lc_stack); gc()
 }
 
-cat("\n✅ LULUCF processing completed.\n")
+cat("\nLULUCF processing completed.\n")
 
 
 
@@ -398,7 +398,7 @@ out_file <- file.path(out_dir, "COS2023_LC_300m.tif")
 writeRaster(lc_stack, out_file, overwrite = TRUE)
 
 cat("Saved:", out_file, "\n")
-cat("\n✅ COS2023 processing completed.\n")
+cat("\nCOS2023 processing completed.\n")
 
 
 
@@ -616,8 +616,8 @@ check_reclass <- function(path) {
   if (length(missing)==0 & length(extra)==0) {
     cat("✔ Class values are correct\n")
   } else {
-    if (length(missing)>0) cat("❌ Missing classes:", missing, "\n")
-    if (length(extra)>0)   cat("❌ Unexpected classes:", extra, "\n")
+    if (length(missing)>0) cat("Missing classes:", missing, "\n")
+    if (length(extra)>0)   cat("Unexpected classes:", extra, "\n")
   }
   
   # Class distribution
@@ -634,11 +634,11 @@ check_reclass <- function(path) {
   
   # Red flags
   if (length(values_present) == 1 && values_present == 999) {
-    cat("🚨 WARNING: Raster is entirely NODATA\n")
+    cat("WARNING: Raster is entirely NODATA\n")
   }
   
   if (any(values_present > 100 & !values_present %in% expected)) {
-    cat("🚨 WARNING: Looks like original land cover codes remain\n")
+    cat("WARNING: Looks like original land cover codes remain\n")
   }
   
   cat("==============================\n")

@@ -6,7 +6,7 @@ library(data.table)
 library(lubridate)
 library(tictoc)
 
-base_path <- "E:/TFM_gangas/GPS"
+base_path <- "E:/TFM_gangas/GPS/Subsamp"
 
 csv_files <- list.files(base_path, pattern = "\\.csv$", full.names = TRUE)
 
@@ -20,11 +20,9 @@ for (file in csv_files) {
   tic(paste("File", file_index))
   
   dt <- fread(file, encoding = "UTF-8")
-  
-  # Ensure timestamp is proper POSIXct
+ 
   dt[, timestamp_gmt0 := as.POSIXct(timestamp_gmt0, tz = "UTC")]
   
-  # Remove rows with missing timestamps
   dt <- dt[!is.na(timestamp_gmt0)]
   
   # Extract date and minutes of day
@@ -90,7 +88,7 @@ library(data.table)
 library(lubridate)
 library(tictoc)
 
-base_path <- "E:/TFM_gangas/GPS"
+base_path <- "E:/TFM_gangas/GPS/Subsamp"
 
 csv_files <- list.files(base_path, pattern = "\\.csv$", full.names = TRUE)
 
@@ -187,6 +185,88 @@ cat("PTS_filtered_merged.csv\n")
 
 
 
+# ===========================================
+# FILTER AND MERGE SANDGROUSE CSV SCRIPT
+# (NO TIME SUBSAMPLING)
+# ===========================================
+
+library(data.table)
+library(lubridate)
+library(tictoc)
+
+base_path <- "E:/TFM_gangas/GPS/Subsamp"
+
+csv_files <- list.files(base_path, pattern = "\\.csv$", full.names = TRUE)
+
+bbs_files <- csv_files[grepl("BBS", basename(csv_files))]
+pts_files <- csv_files[grepl("PTS", basename(csv_files))]
+
+process_species <- function(file_list, species_name) {
+  
+  all_results <- list()
+  file_index <- 1
+  
+  tic(paste("Processing", species_name))
+  
+  for (file in file_list) {
+    
+    tic(paste("File", basename(file)))
+    
+    dt <- fread(file, encoding = "UTF-8")
+    
+    # Skip file if timestamp column does not exist
+    if (!"timestamp_gmt0" %in% names(dt)) next
+    
+    # Convert timestamp and remove NA values
+    dt[, timestamp_gmt0 := as.POSIXct(timestamp_gmt0, tz = "UTC")]
+    dt <- dt[!is.na(timestamp_gmt0)]
+    
+    # Remove outliers if column exists
+    if ("outliers" %in% names(dt)) {
+      dt <- dt[is.na(outliers) | outliers != "YES"]
+    }
+    
+    # Special rule for specific individual
+    if (grepl("PTS_12901", basename(file))) {
+      dt <- dt[timestamp_gmt0 >= as.POSIXct("2023-03-15 00:00:00", tz = "UTC")]
+    }
+    
+    # Remove data after 31 Dec 2024
+    dt <- dt[timestamp_gmt0 <= as.POSIXct("2024-12-31 23:59:59", tz = "UTC")]
+    
+    # Create additional useful variables
+    dt[, date := as.Date(timestamp_gmt0)]
+    dt[, minutes_of_day := hour(timestamp_gmt0) * 60 + minute(timestamp_gmt0)]
+    
+    # Store full filtered dataset
+    all_results[[file_index]] <- dt
+    
+    rm(dt)
+    gc()
+    
+    toc()
+    file_index <- file_index + 1
+  }
+  
+  toc()
+  
+  final_dt <- rbindlist(all_results, fill = TRUE)
+  return(final_dt)
+}
+
+# Run processing
+bbs_data <- process_species(bbs_files, "BBS")
+pts_data <- process_species(pts_files, "PTS")
+
+# Save outputs
+fwrite(bbs_data, file.path(base_path, "BBS_filtered_merged.csv"))
+fwrite(pts_data, file.path(base_path, "PTS_filtered_merged.csv"))
+
+cat("\nDONE. Files created:\n")
+cat("BBS_filtered_merged.csv\n")
+cat("PTS_filtered_merged.csv\n")
+
+
 
 # ====================================
 # CHECK SCRIPT
@@ -195,7 +275,7 @@ cat("PTS_filtered_merged.csv\n")
 library(data.table)
 library(lubridate)
 
-base_path <- "E:/TFM_gangas/GPS"
+base_path <- "E:/TFM_gangas/GPS/Subsamp/Merged"
 
 bbs <- fread(file.path(base_path, "BBS_filtered_merged.csv"))
 pts <- fread(file.path(base_path, "PTS_filtered_merged.csv"))
@@ -286,13 +366,9 @@ for (csv_path in csv_files) {
   
   cat("Processing file:", csv_path, "\n")
   
-  # Read CSV
   data <- read.csv(csv_path)
+    data <- data %>% select(birdID, timestamp_gmt0, X_25830, Y_25830)
   
-  # Keep only required columns
-  data <- data %>% select(birdID, timestamp_gmt0, X_25830, Y_25830)
-  
-  # Convert to sf object using EPSG:25830
   data_sf <- st_as_sf(
     data,
     coords = c("X_25830", "Y_25830"),
@@ -300,16 +376,12 @@ for (csv_path in csv_files) {
     remove = FALSE
   )
   
-  # Ensure birdID is character
   data_sf$birdID <- as.character(data_sf$birdID)
   
-  # Get unique individuals
   individuals <- unique(data_sf$birdID)
-  
-  # Output path (same folder, add _indi)
+
   output_gpkg <- gsub(".csv$", "_indi.gpkg", csv_path)
   
-  # Remove existing file if present
   if (file.exists(output_gpkg)) file.remove(output_gpkg)
   
   # Write one layer per individual
@@ -329,12 +401,11 @@ for (csv_path in csv_files) {
   
   cat("Finished file:", output_gpkg, "\n")
   
-  # Clean memory
   rm(data, data_sf, individuals, ind_data)
   gc()
 }
 
-cat("All files processed successfully ✅\n")
+cat("All files processed successfully\n")
 
 
 
@@ -350,9 +421,7 @@ library(data.table)
 library(lubridate)
 library(terra)
 
-# 1. Paths and input files
-
-base_path <- "E:/TFM_gangas/GPS/MergedV.2"
+base_path <- "E:/TFM_gangas/GPS/Subsamp/Merged"
 
 input_files <- list(
   BBS = file.path(base_path, "BBS_filtered_merged.csv"),

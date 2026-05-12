@@ -16,13 +16,16 @@ library(ggplot2)
 library(sf)
 library(blockCV)
 library(pdp)
+library(ecospat)
 
 set.seed(723)
 
 # ------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------
-base_path <- "E:/TFM_gangas/GPS/ExtractedV.2"
+base_path <- "E:/TFM_gangas/GPS/ExtractedV.3/CalibrationVersion"
+model_dir <- file.path(base_path, "CV_models")
+dir.create(model_dir, showWarnings = FALSE)
 
 # ------------------------------------------------------------
 # Species and pseudoabsence methods
@@ -30,11 +33,11 @@ base_path <- "E:/TFM_gangas/GPS/ExtractedV.2"
 species_list <- c("PTS", "BBS")
 
 methods <- data.frame(
-  method = c("Random", "P95", "MCP40km"),
+  method = c("Random", "P95", "MCP40"),
   file   = c(
     "pseudoabsences_Random_env.csv",
-    "pseudoabsences_P95_env.csv",
-    "pseudoabsences_MCP40km_env.csv"
+    "pseudoabsences_P95_decay_env.csv",
+    "pseudoabsences_MCP40_decay_env.csv"
   ),
   stringsAsFactors = FALSE
 )
@@ -101,6 +104,7 @@ registerDoParallel(cl)
 all_results <- data.frame()
 all_pdp <- data.frame()
 all_importance <- data.frame()
+all_calibration <- data.frame()
 
 ############################################
 # MAIN LOOP
@@ -155,7 +159,7 @@ for (sp in species_list) {
       speciesData = data_sf,
       species = "presence",
       k = 5,
-      theRange = 25000,
+      theRange = 30000,
       selection = "random",
       iteration = 100
     )
@@ -186,12 +190,10 @@ for (sp in species_list) {
     
     results <- foreach(
       k = 1:5,
-      .packages = c("randomForest","pROC","dplyr","pdp")
+      .packages = c("randomForest","pROC","dplyr","pdp","ecospat")
     ) %dopar% {
       
       set.seed(1000 + k)
-      
-      start_time <- Sys.time()
       
       train <- data_model[data_model$fold != k, ]
       test  <- data_model[data_model$fold == k, ]
@@ -202,12 +204,29 @@ for (sp in species_list) {
       n_pres <- sum(train$presence==1)
       sampsize <- c("0"=n_pres,"1"=n_pres)
       
+      predictors <- setdiff(names(train), "presence")
+      n_vars <- length(predictors)
+      
       rf_model <- randomForest(
         presence ~ .,
         data=train,
         ntree=500,
+        mtry = floor(n_vars / 2),
+        nodesize = 1,
         sampsize=sampsize,
         importance=TRUE
+      )
+      
+      ##########################################
+      # SAVE FOLDS
+      ##########################################
+      
+      saveRDS(
+        rf_model,
+        file = file.path(
+          model_dir,
+          paste0("RF_", sp, "_", methods$method[m], "_fold", k, ".rds")
+        )
       )
       
       ##########################################
@@ -216,21 +235,50 @@ for (sp in species_list) {
       
       preds_prob <- predict(rf_model,test,type="prob")[,"1"]
       
+      # Save calibration predictions
+      calibration_df <- data.frame(
+        observed = as.numeric(as.character(test$presence)),
+        predicted = preds_prob,
+        fold = k,
+        species = sp,
+        method = methods$method[m]
+      )
+      
       auc_val <- as.numeric(auc(test$presence,preds_prob))
       
-      roc_curve <- roc(test$presence,preds_prob)
-      thr <- coords(roc_curve,"best")$threshold
+      # ROC threshold
+      roc_curve <- roc(test$presence, preds_prob)
+      thr <- coords(roc_curve, "best")$threshold
       
-      preds_bin <- ifelse(preds_prob>=thr,1,0)
+      # binarize
+      preds_bin <- ifelse(preds_prob >= thr, 1, 0)
       
+      # confusion
       TP <- sum(preds_bin==1 & test$presence==1)
+      FN <- sum(preds_bin==0 & test$presence==1)
       TN <- sum(preds_bin==0 & test$presence==0)
       FP <- sum(preds_bin==1 & test$presence==0)
-      FN <- sum(preds_bin==0 & test$presence==1)
       
-      sens <- TP/(TP+FN)
-      spec <- TN/(TN+FP)
-      tss  <- sens+spec-1
+      sens <- ifelse((TP+FN)==0, NA, TP/(TP+FN))
+      spec <- ifelse((TN+FP)==0, NA, TN/(TN+FP))
+      
+      tss <- sens + spec - 1
+      
+      # Boyce
+      boyce <- tryCatch({
+        res <- ecospat.boyce(
+          fit = preds_prob,
+          obs = preds_prob[test$presence == 1],
+          PEplot = FALSE
+        )$cor
+        
+        if(length(res) == 0 || is.nan(res)) NA else res
+        
+      }, error = function(e) NA)
+      
+      ##########################################
+      # METRICS TABLE
+      ##########################################
       
       metrics <- data.frame(
         fold=k,
@@ -238,7 +286,8 @@ for (sp in species_list) {
         Sensitivity=sens,
         Specificity=spec,
         TSS=tss,
-        threshold=thr,
+        Boyce=boyce,
+        Threshold=thr,
         species=sp,
         method=methods$method[m]
       )
@@ -252,7 +301,6 @@ for (sp in species_list) {
       imp_df <- data.frame(
         variable=rownames(imp),
         MeanDecreaseAccuracy = imp[,1],
-        MeanDecreaseGini = imp[,2],
         fold=k,
         species=sp,
         method=methods$method[m]
@@ -290,16 +338,12 @@ for (sp in species_list) {
       
       pdp_df <- bind_rows(pdp_list)
       
-      end_time <- Sys.time()
-      
-      time_df <- data.frame(
-        fold = k,
-        time_sec = as.numeric(difftime(end_time, start_time, units = "secs")),
-        species=sp,
-        method=methods$method[m]
+      list(
+        metrics = metrics,
+        pdp = pdp_df,
+        importance = imp_df,
+        calibration = calibration_df
       )
-      
-      list(metrics=metrics,pdp=pdp_df,importance=imp_df,time=time_df)
     }
     
     toc()
@@ -316,6 +360,11 @@ for (sp in species_list) {
     
     all_importance <- rbind(all_importance,
                             bind_rows(lapply(results, `[[`, "importance")))
+   
+     all_calibration <- rbind(
+      all_calibration,
+      bind_rows(lapply(results, `[[`, "calibration"))
+    )
     
   }
 }
@@ -338,14 +387,17 @@ summary_table <- all_results %>%
   summarise(
     mean_AUC = mean(AUC),
     sd_AUC   = sd(AUC),
-    mean_TSS = mean(TSS),
-    sd_TSS   = sd(TSS),
     mean_Sens = mean(Sensitivity),
     sd_Sens   = sd(Sensitivity),
-    mean_Spec = mean(Specificity),
-    sd_Spec   = sd(Specificity),
-    mean_threshold = mean(threshold),
-    sd_threshold   = sd(threshold),
+    mean_Specificity = mean(Specificity, na.rm=TRUE),
+    sd_Specificity   = sd(Specificity, na.rm=TRUE),
+    mean_TSS = mean(TSS, na.rm=TRUE),
+    sd_TSS   = sd(TSS, na.rm=TRUE),
+    mean_Threshold = mean(Threshold),
+    sd_Threshold   = sd(Threshold),
+    mean_Boyce = mean(Boyce, na.rm=TRUE),
+    sd_Boyce   = sd(Boyce, na.rm=TRUE),
+    n_folds_Boyce = sum(!is.na(Boyce)),
     .groups = "drop"
   )
 
@@ -381,11 +433,6 @@ importance_summary <- all_importance %>%
   summarise(
     mean_MDA = mean(MeanDecreaseAccuracy),
     sd_MDA   = sd(MeanDecreaseAccuracy),
-    min_MDA  = min(MeanDecreaseAccuracy),
-    max_MDA  = max(MeanDecreaseAccuracy),
-    mean_Gini = mean(MeanDecreaseGini),
-    sd_Gini   = sd(MeanDecreaseGini),
-    negative_freq = mean(MeanDecreaseAccuracy < 0),
     .groups = "drop"
   ) %>%
   arrange(species, method, desc(mean_MDA))
@@ -403,7 +450,13 @@ saveWorkbook(
   overwrite = TRUE
 )
 
-cat("\nSAVED EXCELL PERFECTLY\n")
+write.csv(
+  all_calibration,
+  file.path(base_path, "Calibration_data.csv"),
+  row.names = FALSE
+)
+
+cat("\nSAVED EXCELL\n")
 
 ############################################
 # PDP MEAN + SD
@@ -500,7 +553,6 @@ vars_plot <- c("Altitude","HFP","Population","NDVI","DistRoad","Heterogeneity")
 
 importance_plot <- importance_summary %>%
   filter(
-    method == "Random",
     variable %in% vars_plot
   )
 
@@ -517,7 +569,7 @@ p_imp <- ggplot(importance_plot,
   
   coord_flip() +
   
-  facet_wrap(~species) +
+  facet_grid(species ~ method) +
   
   theme_classic(base_size = 14) +
   
@@ -538,7 +590,7 @@ ggsave(
 
 
 ############################################
-# PDP FINAL (CLEAN VERSION)
+# PDP FINAL
 ############################################
 
 library(dplyr)
@@ -547,7 +599,7 @@ library(ggplot2)
 # ------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------
-base_path <- "E:/TFM_gangas/GPS/ExtractedV.2"
+base_path <- "E:/TFM_gangas/GPS/ExtractedV.3/CalibrationVersion"
 
 # ------------------------------------------------------------
 # SELECTED VARIABLES
@@ -568,7 +620,6 @@ vars_plot <- c(
 
 pdp_subset <- pdp_summary %>%
   filter(
-    method == "Random",
     variable %in% vars_plot
   )
 
@@ -604,7 +655,7 @@ p <- ggplot(pdp_subset, aes(x = value)) +
     linewidth = 1
   ) +
 
-  facet_grid(species ~ variable, scales = "free_x") +
+  facet_grid(species + method ~ variable, scales = "free_x") +
   
   theme_classic(base_size = 14) +
   

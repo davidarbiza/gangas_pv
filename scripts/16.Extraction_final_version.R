@@ -24,17 +24,17 @@ terraOptions(
 # ------------------------------------------------------------
 base_dir <- "E:/TFM_gangas"
 gps_dir  <- file.path(base_dir, "GPS", "MergedV.2")
-out_dir  <- file.path(base_dir, "GPS", "ExtractedV.2")
+out_dir  <- file.path(base_dir, "GPS", "ExtractedV.3")
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 csv_files <- file.path(
   gps_dir,
   c(
-    "BBS_pseudoabsences_MCP40km.csv",
-    "BBS_pseudoabsences_P95.csv",
+    "BBS_pseudoabsences_MCP40_decay.csv",
+    "BBS_pseudoabsences_P95_decay.csv",
     "BBS_pseudoabsences_Random.csv",
-    "PTS_pseudoabsences_MCP40km.csv",
-    "PTS_pseudoabsences_P95.csv",
+    "PTS_pseudoabsences_MCP40_decay.csv",
+    "PTS_pseudoabsences_P95_decay.csv",
     "PTS_pseudoabsences_Random.csv"
   )
 )
@@ -273,7 +273,7 @@ for(csv in csv_files){
   )
   write.csv(pts_final, out_file, row.names = FALSE)
   
-  cat("✅ Saved:", basename(out_file), "\n")
+  cat("Saved:", basename(out_file), "\n")
   toc()
   
   rm(list = ls()[!ls() %in% c("base_dir","gps_dir","out_dir","csv_files",
@@ -294,7 +294,7 @@ library(lubridate)
 library(tictoc)
 
 base_dir <- "E:/TFM_gangas"
-in_dir   <- file.path(base_dir,"GPS","ExtractedV.2")
+in_dir   <- file.path(base_dir,"GPS","ExtractedV.3")
 
 csv_files <- list.files(in_dir, pattern="_env\\.csv$", full.names=TRUE)
 
@@ -340,7 +340,6 @@ for(csv in csv_files){
 
 
 
-
 # ============================================================
 # CLIMATIC VARIABLES EXTRACTION – TFM GANGAS (TMEAN ONLY)
 # ============================================================
@@ -350,9 +349,9 @@ library(lubridate)
 library(tictoc)
 
 base_dir <- "E:/TFM_gangas"
-in_dir   <- file.path(base_dir,"GPS","ExtractedV.2")
+in_dir   <- file.path(base_dir,"GPS","ExtractedV.3")
 
-csv_files <- list.files(in_dir, pattern="_env\\.csv$", full.names=TRUE)
+csv_files <- file.path(in_dir, "BBS_pseudoabsences_Random_env.csv")
 
 clim_base <- file.path(base_dir,"Climaticas","10_days")
 
@@ -427,10 +426,10 @@ library(patchwork)
 # ------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------
-base_path <- "E:/TFM_gangas/GPS/ExtractedV.2"
+base_path <- "E:/TFM_gangas/GPS/ExtractedV.3"
 
 files <- list(
-  PTS = file.path(base_path, "PTS_pseudoabsences_Random_env.csv"),
+  PTS = file.path(base_path, "BBS_pseudoabsences_Random_env.csv"),
   BBS = file.path(base_path, "BBS_pseudoabsences_Random_env.csv")
 )
 
@@ -660,7 +659,6 @@ cat("\nFINISHED — Excel saved\n")
 
 ############################################
 # Predictor–Response multipanel plots
-# FINAL VERSION
 ############################################
 
 library(dplyr)
@@ -675,7 +673,7 @@ base_path <- "E:/TFM_gangas/GPS/ExtractedV.2"
 species_list <- c("PTS", "BBS")
 
 # ------------------------------------------------------------
-# Variables to plot (FINAL SELECTION)
+# Variables to plot
 # ------------------------------------------------------------
 vars_to_plot <- c(
   "Altitude",
@@ -776,7 +774,7 @@ for (sp in species_list) {
   )
 }
 
-cat("\n✅ Multipanel plots generated successfully\n")
+cat("\nMultipanel plots generated successfully\n")
 
 
 
@@ -952,3 +950,8 @@ saveWorkbook(
 )
 
 cat("\nTables finished\n")
+
+
+
+
+

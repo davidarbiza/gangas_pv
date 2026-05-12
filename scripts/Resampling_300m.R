@@ -119,7 +119,7 @@ for (dataset in names(datasets)) {
   }
 }
 
-cat("\n✅ ALL DONE: All rasters resampled to 300m and aligned with NDVI template.\n")
+cat("\nALL DONE: All rasters resampled to 300m and aligned with NDVI template.\n")
 
 
 
@@ -185,9 +185,9 @@ raster_df$aligned <- apply(raster_df[, check_cols], 1, function(x) all(abs(x - r
 # 4. REPORT
 # ============
 if(all(raster_df$aligned)){
-  cat("✅ ALL 300m rasters perfectly aligned with each other!\n")
+  cat("ALL 300m rasters perfectly aligned with each other!\n")
 } else {
-  cat("⚠️ Some rasters are misaligned:\n")
+  cat("Some rasters are misaligned:\n")
   print(raster_df[!raster_df$aligned, c("file", check_cols)])
 }
 
@@ -201,9 +201,9 @@ cat("Example number of bands (first 5):", raster_df$bands[1:5], "\n")
 aligned_count <- sum(raster_df$aligned)
 misaligned_count <- nrow(raster_df) - aligned_count
 
-cat("✅ Total rasters checked:", nrow(raster_df), "\n")
-cat("✅ Aligned rasters:", aligned_count, "\n")
-cat("⚠️ Misaligned rasters:", misaligned_count, "\n")
+cat("Total rasters checked:", nrow(raster_df), "\n")
+cat("Aligned rasters:", aligned_count, "\n")
+cat("Misaligned rasters:", misaligned_count, "\n")
 
 if(misaligned_count > 0){
   cat("List of misaligned rasters:\n")

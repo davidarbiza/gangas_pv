@@ -9,7 +9,6 @@ terraOptions(
   progress = 1                        
 )
 
-# Read all files
 dem_files <- list.files("E:/TFM_gangas/Topograficas/Auxiliares", pattern = "\\.tif$", full.names = TRUE)
 
 # Load as SpatRaster

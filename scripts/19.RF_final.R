@@ -439,7 +439,6 @@ make_gif_prob <- function(pattern, out_name){
   files <- list.files(base_path, pattern = pattern, full.names = TRUE)
   files <- sort(files)
   
-  # escala global
   all_vals <- c()
   for(f in files){
     r <- rast(f)
@@ -494,7 +493,7 @@ library(magick)
 base_path <- "E:/TFM_gangas/PROJECTIONS"
 
 # ------------------------------------------------------------
-# THRESHOLD (ajústalo si calculas TSS)
+# THRESHOLD
 # ------------------------------------------------------------
 threshold <- 0.3
 
@@ -515,7 +514,7 @@ make_gif_binary <- function(pattern, out_name){
     r <- rast(files[i])
     
     # --------------------------------------------------------
-    # FILL NA (ONLY NA, NO SMOOTHING)
+    # FILL NA
     # --------------------------------------------------------
     r_fill <- focal(r, w=3, fun=mean, na.rm=TRUE)
     r[is.na(r)] <- r_fill[is.na(r)]
@@ -568,11 +567,8 @@ make_gif_binary("BBS_month_.*\\.tif$", "BBS_binary.gif")
 
 
 
-
-
-
 ############################################
-# SDM FINAL RESULTS — CLEAN VERSION
+# SDM FINAL RESULTS MONTHLY
 ############################################
 
 library(terra)
@@ -807,6 +803,473 @@ p_overlap <- ggplot() +
     legend.title = element_text(face = "bold"),
     legend.text = element_text(size = 10)
   )
+
+ggsave(file.path(out_dir,"Fig4_overlap.png"),
+       p_overlap, width = 6, height = 5, dpi = 300, bg = "white")
+
+cat("\nFINAL CLEAN RESULTS READY\n")
+
+
+
+
+
+
+
+############################################
+# FINAL PROJECTION SCRIPT - 10 DAY RESOLUTION
+############################################
+
+library(terra)
+library(sf)
+library(stringr)
+library(rnaturalearth)
+library(randomForest)
+
+# ------------------------------------------------------------
+# TERRA OPTIONS
+# ------------------------------------------------------------
+terraOptions(
+  memfrac = 0.4,
+  tempdir = "C:/Users/andre/AppData/Local/Temp/temp_terra",
+  progress = 1
+)
+
+dir.create("C:/Users/andre/AppData/Local/Temp/temp_terra", showWarnings = FALSE)
+
+# ------------------------------------------------------------
+# PATHS
+# ------------------------------------------------------------
+base_path  <- "E:/TFM_gangas"
+model_path <- "E:/TFM_gangas/GPS/ExtractedV.2"
+
+out_dir <- file.path(model_path, "PROJECTIONS_10DAYS")
+dir.create(out_dir, showWarnings = FALSE)
+
+# ------------------------------------------------------------
+# MODELS
+# ------------------------------------------------------------
+models <- list(
+  PTS = readRDS(file.path(model_path, "RF_final_PTS.rds")),
+  BBS = readRDS(file.path(model_path, "RF_final_BBS.rds"))
+)
+
+# ------------------------------------------------------------
+# STATIC VARIABLES
+# ------------------------------------------------------------
+dem  <- rast(file.path(base_path,"Topograficas/300m/Spain_DEM_reproject_300m.tif"))
+slope <- rast(file.path(base_path,"Topograficas/300m/Slope_map_Spain_300m.tif"))
+hetero <- rast(file.path(base_path,"Heterogeneidad/300m/shannon_01_05_1km_Spain_25830_300m.tif"))
+roads <- rast(file.path(base_path,"DistanciaCarreteras/300m/Distroads_spain_merged_300m.tif"))
+
+names(dem)    <- "Altitude"
+names(slope)  <- "Slope"
+names(hetero) <- "Heterogeneity"
+names(roads)  <- "DistRoad"
+
+# ------------------------------------------------------------
+# SOCIO-ENVIRONMENTAL
+# ------------------------------------------------------------
+pop <- rast(file.path(base_path,"DensidadPoblacion/300m/GHS_POP_2020_25830_300m.tif"))
+hfp <- rast(file.path(base_path,"HumanFootprint/300m/hfp_2020_100m_25830_300m.tif"))
+
+names(pop) <- "Population"
+names(hfp) <- "HFP"
+
+# ------------------------------------------------------------
+# LULUCF + COS
+# ------------------------------------------------------------
+lulucf <- rast(file.path(base_path,
+                         "UsosSuelo/LULUCF/300m/LULUCF_LC_2021_300m.tif"))
+
+cos <- rast(file.path(base_path,
+                      "UsosSuelo/COS2023/300m/COS2023_LC_300m.tif"))
+
+lc_names <- c(
+  "LC_Forest","LC_Vineyards","LC_TreeCrops","LC_RiceFields",
+  "LC_Greenhouses","LC_AnnualCrops","LC_TreePasture","LC_ShrubPasture",
+  "LC_HerbPasture","LC_WaterBodies","LC_Marshes","LC_Artificial",
+  "LC_OtherLand","LC_AgriMosaic"
+)
+
+names(lulucf) <- lc_names
+names(cos)    <- lc_names
+
+# ---- Merge Spain + Portugal ----
+por <- ne_countries(country = "Portugal", scale = "medium", returnclass = "sf")
+por <- st_transform(por, 25830)
+por_vect <- vect(por)
+
+lulucf_list <- vector("list", nlyr(lulucf))
+
+for(i in 1:nlyr(lulucf)){
+  r_port  <- mask(cos[[i]], por_vect)
+  r_final <- cover(r_port, lulucf[[i]])
+  lulucf_list[[i]] <- r_final
+}
+
+lulucf_final <- rast(lulucf_list)
+names(lulucf_final) <- lc_names
+
+# ------------------------------------------------------------
+# FILE LISTS
+# ------------------------------------------------------------
+ndvi_path <- file.path(base_path,"NDVI/SpainReprojected/300m")
+ndvi_files <- sort(list.files(ndvi_path, full.names = TRUE))
+dates <- as.Date(str_extract(ndvi_files, "\\d{8}"), "%Y%m%d")
+
+tmean_stack   <- rast(list.files(file.path(base_path,"Climaticas/10_days/Tmean/300m"),
+                                 pattern="mean_.*\\.tif$", full.names=TRUE))
+
+tmeansd_stack <- rast(list.files(file.path(base_path,"Climaticas/10_days/Tmean/300m"),
+                                 pattern="sd_.*\\.tif$", full.names=TRUE))
+
+prcp_stack    <- rast(list.files(file.path(base_path,"Climaticas/10_days/Prcp/300m"),
+                                 pattern="\\.tif$", full.names=TRUE))
+
+# ------------------------------------------------------------
+# FUNCTIONS
+# ------------------------------------------------------------
+get_band_index <- function(date){
+  day <- as.numeric(format(date, "%d"))
+  month <- as.numeric(format(date, "%m"))
+  dekad <- ceiling(day / 10)
+  (month - 1) * 3 + dekad
+}
+
+get_band_indices_all_years <- function(band_i, total_layers){
+  n_years <- total_layers / 36
+  seq(from = band_i, by = 36, length.out = n_years)
+}
+
+# ------------------------------------------------------------
+# LOOP
+# ------------------------------------------------------------
+unique_bands <- 1:36
+
+for(band_i in unique_bands){
+  
+  cat("\n=============================\n")
+  cat("DEKAD:", band_i, "\n")
+  cat("=============================\n")
+  
+  # --------------------------------------------------------
+  # CHECK IF FILES EXIST
+  # --------------------------------------------------------
+  out_files <- file.path(out_dir,
+                         paste0(names(models), "_dekad_", sprintf("%02d", band_i), ".tif"))
+  
+  if(all(file.exists(out_files))){
+    cat("Skipping dekad", band_i, "- already done\n")
+    next
+  }
+  
+  # --------------------------------------------------------
+  # NDVI
+  # --------------------------------------------------------
+  ndvi_idx <- which(
+    ((as.numeric(format(dates, "%m")) - 1) * 3 +
+       ceiling(as.numeric(format(dates, "%d")) / 10)) == band_i
+  )
+  
+  ndvi_m <- mean(rast(ndvi_files[ndvi_idx]), na.rm=TRUE)
+  names(ndvi_m) <- "NDVI"
+  
+  # --------------------------------------------------------
+  # CLIMATE
+  # --------------------------------------------------------
+  idx <- get_band_indices_all_years(band_i, nlyr(tmean_stack))
+  
+  tmean_m   <- mean(tmean_stack[[idx]], na.rm=TRUE)
+  tmeansd_m <- mean(tmeansd_stack[[idx]], na.rm=TRUE)
+  prcp_m    <- mean(prcp_stack[[idx]], na.rm=TRUE)
+  
+  names(tmean_m)   <- "Tmean"
+  names(tmeansd_m) <- "TmeanSD100"
+  names(prcp_m)    <- "Prcp"
+  
+  # --------------------------------------------------------
+  # ENV STACK
+  # --------------------------------------------------------
+  env_stack <- c(
+    dem, slope, hetero, roads,
+    pop, hfp,
+    lulucf_final,
+    ndvi_m,
+    prcp_m,
+    tmean_m,
+    tmeansd_m
+  )
+  
+  # --------------------------------------------------------
+  # MODEL LOOP
+  # --------------------------------------------------------
+  for(model_name in names(models)){
+    
+    rf_model <- models[[model_name]]
+    
+    out_file <- file.path(out_dir,
+                          paste0(model_name, "_dekad_", sprintf("%02d", band_i), ".tif"))
+    
+    if(file.exists(out_file)){
+      cat("Skipping:", basename(out_file), "\n")
+      next
+    }
+    
+    cat("Running:", model_name, "- dekad", band_i, "\n")
+    
+    start_time <- Sys.time()
+    
+    terra::predict(
+      env_stack,
+      rf_model,
+      fun = function(model, data, ...) {
+        predict(model, newdata = data, type = "prob")[,2]
+      },
+      na.rm = TRUE,
+      filename = out_file,
+      overwrite = TRUE,
+      wopt = list(datatype="FLT4S")
+    )
+    
+    end_time <- Sys.time()
+    elapsed <- round(as.numeric(difftime(end_time, start_time, units = "secs")), 2)
+    
+    cat("Finished:", model_name, "- Time:", elapsed, "sec\n")
+    
+    gc()
+  }
+  
+  # --------------------------------------------------------
+  # CLEAN MEMORY
+  # --------------------------------------------------------
+  rm(env_stack, ndvi_m, tmean_m, tmeansd_m, prcp_m)
+  gc()
+}
+
+cat("\nALL PROJECTIONS COMPLETED\n")
+############################################
+# SDM FINAL RESULTS — 10 DAILY
+############################################
+
+library(terra)
+library(ggplot2)
+library(tidyterra)
+library(dplyr)
+library(sf)
+library(mapSpain)
+library(rnaturalearth)
+library(patchwork)
+
+# ------------------------------------------------------------
+# PATHS
+# ------------------------------------------------------------
+base_path <- "E:/TFM_gangas/GPS/ExtractedV.2/PROJECTIONS_10DAYS"
+out_dir <- file.path(base_path, "FINAL_RESULTS_CLEAN")
+dir.create(out_dir, showWarnings = FALSE)
+
+# ------------------------------------------------------------
+# THRESHOLDS
+# ------------------------------------------------------------
+threshold_pts <- 0.195
+threshold_bbs <- 0.203
+
+# ------------------------------------------------------------
+# FILES
+# ------------------------------------------------------------
+files_pts <- sort(list.files(base_path, pattern="PTS_.*\\.tif$", full.names=TRUE))
+files_bbs <- sort(list.files(base_path, pattern="BBS_.*\\.tif$", full.names=TRUE))
+
+n_time <- length(files_pts)
+
+# ------------------------------------------------------------
+# MASK
+# ------------------------------------------------------------
+provinces <- esp_get_prov()
+provinces <- provinces[!provinces$iso2.prov.name.es %in% 
+                         c("Baleares","Las Palmas","Santa Cruz de Tenerife","Ceuta","Melilla"), ]
+provinces <- st_transform(provinces, 25830)
+
+mask_spain <- st_union(provinces)
+
+por <- ne_countries(country = "Portugal", scale = "medium", returnclass = "sf")
+por <- st_transform(por, 25830)
+por <- st_cast(por, "POLYGON")
+por$area <- st_area(por)
+por <- por[which.max(por$area), ]
+
+iberia_mask <- st_union(mask_spain, por)
+mask_vect <- vect(iberia_mask)
+
+# ------------------------------------------------------------
+# LOAD STACKS
+# ------------------------------------------------------------
+stack_pts <- mask(crop(rast(files_pts), mask_vect), mask_vect)
+stack_bbs <- mask(crop(rast(files_bbs), mask_vect), mask_vect)
+
+# ------------------------------------------------------------
+# GLOBAL SCALE
+# ------------------------------------------------------------
+global_min <- min(
+  global(stack_pts, "min", na.rm=TRUE)[,1],
+  global(stack_bbs, "min", na.rm=TRUE)[,1]
+)
+
+global_max <- max(
+  global(stack_pts, "max", na.rm=TRUE)[,1],
+  global(stack_bbs, "max", na.rm=TRUE)[,1]
+)
+
+# ------------------------------------------------------------
+# MAP FUNCTION
+# ------------------------------------------------------------
+plot_map <- function(r, title){
+  
+  r <- focal(r, w = 3, fun = mean, na.rm = TRUE)
+  
+  ggplot() +
+    geom_spatraster(data = r) +
+    geom_sf(data = iberia_mask, fill = NA, color = "black", linewidth = 0.2) +
+    
+    scale_fill_viridis_c(
+      option = "inferno",
+      limits = c(global_min, global_max),
+      na.value = NA,
+      name = "Suitability"
+    ) +
+    
+    theme_void(base_size = 13) +
+    labs(title = title) +
+    
+    theme(
+      plot.title = element_text(face = "bold", hjust = 0.5),
+      legend.position = "right"
+    )
+}
+
+# ------------------------------------------------------------
+# 1. TEMPORAL CURVE
+# ------------------------------------------------------------
+get_curve <- function(stack, label){
+  data.frame(
+    time = 1:nlyr(stack),
+    mean = global(stack, mean, na.rm=TRUE)[,1],
+    species = label
+  )
+}
+
+df_mean <- rbind(
+  get_curve(stack_pts,"P. alchata"),
+  get_curve(stack_bbs,"P. orientalis")
+)
+
+p_mean <- ggplot(df_mean, aes(time, mean, color = species)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 1.5) +
+  scale_x_continuous(
+    breaks = c(1,4,7,10,13,16,19,22,25,28,31,34),
+    labels = c("Jan","Feb","Mar","Apr","May","Jun",
+               "Jul","Aug","Sep","Oct","Nov","Dec")
+  ) +
+  theme_classic(base_size = 14) +
+  labs(
+    x = "Month",
+    y = "Mean habitat suitability",
+    color = "Species"
+  )
+
+ggsave(file.path(out_dir,"Fig1_mean_suitability.png"),
+       p_mean, width = 8, height = 5, dpi = 300)
+
+# ------------------------------------------------------------
+# 2. SUITABLE AREA
+# ------------------------------------------------------------
+get_area <- function(stack, threshold, label){
+  data.frame(
+    time = 1:nlyr(stack),
+    area = global(stack > threshold, mean, na.rm=TRUE)[,1],
+    species = label
+  )
+}
+
+df_area <- rbind(
+  get_area(stack_pts, threshold_pts, "P. alchata"),
+  get_area(stack_bbs, threshold_bbs, "P. orientalis")
+)
+
+p_area <- ggplot(df_area, aes(time, area, color = species)) +
+  geom_line(linewidth = 1.2) +
+  geom_point(size = 1.5) +
+  scale_x_continuous(
+    breaks = c(1,4,7,10,13,16,19,22,25,28,31,34),
+    labels = c("Jan","Feb","Mar","Apr","May","Jun",
+               "Jul","Aug","Sep","Oct","Nov","Dec")
+  ) +
+  theme_classic(base_size = 14) +
+  labs(
+    x = "Month",
+    y = "Proportion of suitable habitat",
+    color = "Species"
+  )
+
+ggsave(file.path(out_dir,"Fig2_suitable_area.png"),
+       p_area, width = 8, height = 5, dpi = 300)
+
+# ------------------------------------------------------------
+# 3. MAPS
+# ------------------------------------------------------------
+dec <- 36
+may <- 14
+sep <- 27
+
+p_maps <- (
+  plot_map(stack_pts[[dec]], "P. alchata — Dec") +
+    plot_map(stack_pts[[may]], "P. alchata — May") +
+    plot_map(stack_pts[[sep]], "P. alchata — Sep")
+) /
+  (
+    plot_map(stack_bbs[[dec]], "P. orientalis — Dec") +
+      plot_map(stack_bbs[[may]], "P. orientalis — May") +
+      plot_map(stack_bbs[[sep]], "P. orientalis — Sep")
+  )
+
+ggsave(file.path(out_dir,"Fig3_maps.png"),
+       p_maps, width = 12, height = 8, dpi = 300)
+
+# ------------------------------------------------------------
+# 4. OVERLAP
+# ------------------------------------------------------------
+mean_pts_r <- app(stack_pts, mean, na.rm=TRUE)
+mean_bbs_r <- app(stack_bbs, mean, na.rm=TRUE)
+
+thr_pts <- quantile(values(mean_pts_r), 0.9, na.rm=TRUE)
+thr_bbs <- quantile(values(mean_bbs_r), 0.9, na.rm=TRUE)
+
+hot_pts <- mean_pts_r > thr_pts
+hot_bbs <- mean_bbs_r > thr_bbs
+
+overlap <- hot_pts*1 + hot_bbs*2
+overlap <- as.factor(overlap)
+
+levels(overlap) <- data.frame(
+  ID = c(1,2,3),
+  class = c("P. alchata","P. orientalis","Overlap")
+)
+
+p_overlap <- ggplot() +
+  geom_spatraster(data = overlap) +
+  scale_fill_manual(
+    values = c(
+      "P. alchata" = "#E64B35",
+      "P. orientalis" = "#4DBBD5",
+      "Overlap" = "#7E6148"
+    ),
+    name = "Species", 
+    na.value = NA,
+    na.translate = FALSE
+  ) +
+  geom_sf(data = iberia_mask, fill = NA, color = "black", linewidth = 0.17) +
+  theme_void() +
+  labs(title = "Core habitat overlap (top 10%)", fill = "")
 
 ggsave(file.path(out_dir,"Fig4_overlap.png"),
        p_overlap, width = 6, height = 5, dpi = 300, bg = "white")
