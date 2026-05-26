@@ -23,7 +23,7 @@ set.seed(723)
 # ------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------
-base_path <- "E:/TFM_gangas/GPS/ExtractedV.3/CalibrationVersion"
+base_path <- "E:/TFM_gangas/GPS/ExtractedV.4"
 model_dir <- file.path(base_path, "CV_models")
 dir.create(model_dir, showWarnings = FALSE)
 
@@ -74,7 +74,15 @@ env_vars <- auto_sample %>%
     -species,
     -presence,
     -X_25830,
-    -Y_25830
+    -Y_25830,
+    -Tmin,
+    -Tmax,
+    -TminSD100,
+    -TmaxSD100,
+    -AltRange,
+    -Aspect,
+    -LC_RiceFields,
+    -LC_Greenhouses
   )
 
 auto_range <- cv_spatial_autocor(
@@ -159,7 +167,7 @@ for (sp in species_list) {
       speciesData = data_sf,
       species = "presence",
       k = 5,
-      theRange = 30000,
+      theRange = 42000,
       selection = "random",
       iteration = 100
     )
@@ -543,35 +551,47 @@ for (sp in unique(all_pdp$species)) {
 }
 
 ############################################
-# IMPORTANCE PLOT (MEAN + SD)
+# IMPORTANCE FINAL FIGURE
 ############################################
 
 plot_dir_imp <- file.path(base_path, "Importance_plots")
 dir.create(plot_dir_imp, showWarnings = FALSE)
 
-vars_plot <- c("Altitude","HFP","Population","NDVI","DistRoad","Heterogeneity")
-
-importance_plot <- importance_summary %>%
-  filter(
-    variable %in% vars_plot
+p_imp <- ggplot(
+  importance_summary,
+  aes(
+    x = reorder(variable, mean_MDA),
+    y = mean_MDA
   )
-
-p_imp <- ggplot(importance_plot,
-                aes(x = reorder(variable, mean_MDA),
-                    y = mean_MDA)) +
+) +
   
-  geom_point(size = 3) +
+  geom_col(fill = "#5A7D9A") +
   
-  geom_errorbar(aes(
-    ymin = mean_MDA - sd_MDA,
-    ymax = mean_MDA + sd_MDA
-  ), width = 0.2) +
+  geom_errorbar(
+    aes(
+      ymin = mean_MDA - sd_MDA,
+      ymax = mean_MDA + sd_MDA
+    ),
+    width = 0.2
+  ) +
   
   coord_flip() +
   
-  facet_grid(species ~ method) +
+  facet_grid(
+    species ~ method,
+    scales = "free_y"
+  ) +
   
   theme_classic(base_size = 14) +
+  
+  theme(
+    strip.text = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    plot.title = element_text(
+      face = "bold",
+      hjust = 0.5
+    )
+  ) +
   
   labs(
     title = "Variable importance (Random Forest models)",
@@ -580,107 +600,552 @@ p_imp <- ggplot(importance_plot,
   )
 
 ggsave(
-  filename = "Importance_FINAL.png",
+  filename = "Importance_ALL.png",
   plot = p_imp,
   path = plot_dir_imp,
-  width = 10,
-  height = 6,
+  width = 11,
+  height = 7,
   dpi = 300
 )
 
 
+
+
+
+
+
 ############################################
-# PDP FINAL
+# FINAL FIGURES — RANDOM RF MODELS
+# IMPORTANCE + PDPs
 ############################################
 
+library(randomForest)
 library(dplyr)
 library(ggplot2)
+library(pdp)
+library(openxlsx)
+library(patchwork)
 
 # ------------------------------------------------------------
-# Paths
-# ------------------------------------------------------------
-base_path <- "E:/TFM_gangas/GPS/ExtractedV.3/CalibrationVersion"
-
-# ------------------------------------------------------------
-# SELECTED VARIABLES
+# PATHS
 # ------------------------------------------------------------
 
-vars_plot <- c(
-  "Altitude",
-  "HFP",
-  "Population",
-  "NDVI",
-  "DistRoad",
-  "Heterogeneity"
+base_path <- "E:/TFM_gangas/GPS/ExtractedV.4"
+
+model_dir <- file.path(base_path,"CV_models")
+
+plot_dir_imp <- file.path(base_path,"Importance_plots")
+
+plot_dir_pdp <- file.path(base_path,"PDP_plots_sd")
+
+# ------------------------------------------------------------
+# LOAD IMPORTANCE
+# ------------------------------------------------------------
+
+importance_all <- read.xlsx(
+  file.path(base_path,"FINAL_RF_RESULTS.xlsx"),
+  sheet = "Importance_all"
+) %>%
+  
+  filter(method == "Random")
+
+importance_all$MDA_abs <- abs(
+  importance_all$MeanDecreaseAccuracy
 )
 
 # ------------------------------------------------------------
-# FILTER PDP
+# CATEGORIES
 # ------------------------------------------------------------
 
-pdp_subset <- pdp_summary %>%
-  filter(
-    variable %in% vars_plot
+importance_all <- importance_all %>%
+  
+  mutate(
+    
+    category = case_when(
+      
+      variable %in% c(
+        "Prcp","Tmean","TmeanSD100"
+      ) ~ "Climate",
+      
+      variable == "NDVI" ~ "Productivity",
+      
+      variable %in% c(
+        "Altitude","Slope","Heterogeneity"
+      ) ~ "Topography",
+      
+      variable %in% c(
+        "Population","HFP","DistRoad"
+      ) ~ "Human pressure",
+      
+      TRUE ~ "Land cover"
+    )
   )
 
 # ------------------------------------------------------------
-# VARIABLES ORDER
+# LABELS
 # ------------------------------------------------------------
 
-pdp_subset$variable <- factor(
-  pdp_subset$variable,
-  levels = vars_plot
+var_labels <- c(
+  
+  Altitude = "Altitude",
+  Slope = "Slope",
+  Heterogeneity = "Habitat heterogeneity",
+  NDVI = "NDVI",
+  Population = "Population density",
+  HFP = "Human Footprint",
+  DistRoad = "Distance to roads",
+  
+  LC_Forest = "Forest",
+  LC_Vineyards = "Vineyards",
+  LC_TreeCrops = "Tree crops",
+  LC_AnnualCrops = "Annual crops",
+  LC_TreePasture = "Tree pasture",
+  LC_ShrubPasture = "Shrub pasture",
+  LC_HerbPasture = "Herbaceous pasture",
+  LC_WaterBodies = "Water bodies",
+  LC_Marshes = "Marshes",
+  LC_Artificial = "Artificial areas",
+  LC_OtherLand = "Other land",
+  LC_AgriMosaic = "Agricultural mosaic",
+  
+  Prcp = "Precipitation",
+  Tmean = "Mean temperature",
+  TmeanSD100 = "Temperature seasonality"
+)
+
+importance_all$label <- var_labels[
+  importance_all$variable
+]
+
+# ------------------------------------------------------------
+# COLORS
+# ------------------------------------------------------------
+
+cols <- c(
+  "Climate" = "#95b8f6",
+  "Productivity" = "#7FBF7B",
+  "Topography" = "#f9d99a",
+  "Human pressure" = "#dcd9f8",
+  "Land cover" = "#fa5f49"
 )
 
 # ------------------------------------------------------------
-# PLOT FINAL
+# IMPORTANCE FUNCTION
 # ------------------------------------------------------------
 
-p <- ggplot(pdp_subset, aes(x = value)) +
+make_imp_plot <- function(sp_name, latin){
   
-  # Variability
-  geom_ribbon(
-    aes(
-      ymin = mean_yhat - sd_yhat,
-      ymax = mean_yhat + sd_yhat
-    ),
-    fill = "#A8C3BC",
-    alpha = 0.4
-  ) +
+  df <- importance_all %>%
+    
+    filter(species == sp_name)
   
-  # Mean line
-  geom_line(
-    aes(y = mean_yhat),
-    color = "#1F1F1F",
-    linewidth = 1
-  ) +
-
-  facet_grid(species + method ~ variable, scales = "free_x") +
+  order_df <- df %>%
+    
+    group_by(label) %>%
+    
+    summarise(mean_imp = mean(MDA_abs), .groups="drop") %>%
+    
+    arrange(mean_imp)
   
-  theme_classic(base_size = 14) +
-  
-  theme(
-    strip.text = element_text(face = "bold"),
-    axis.title = element_text(face = "bold"),
-    axis.text = element_text(color = "black"),
-    plot.title = element_text(face = "bold", hjust = 0.5)
-  ) +
-  
-  labs(
-    title = "Partial dependence plots (Random Forest models)",
-    x = "Environmental gradient",
-    y = "Predicted probability"
+  df$label <- factor(
+    df$label,
+    levels = order_df$label
   )
+  
+  ggplot(
+    df,
+    aes(x = label, y = MDA_abs, fill = category)
+  ) +
+    
+    geom_boxplot(
+      alpha = 0.85,
+      outlier.size = 1.5
+    ) +
+    
+    coord_flip() +
+    
+    scale_fill_manual(values = cols) +
+    
+    theme_bw(base_size = 14) +
+    
+    theme(
+      legend.title = element_blank(),
+      legend.position = "bottom",
+      
+      axis.title.y = element_blank(),
+      
+      axis.text.y = element_text(size = 11),
+      axis.text.x = element_text(size = 11),
+      
+      plot.title = element_text(
+        face = "italic",
+        hjust = 0.5,
+        size = 16
+      )
+    ) +
+    
+    labs(
+      title = latin,
+      y = "Mean Decrease Accuracy"
+    )
+}
 
 # ------------------------------------------------------------
-# SAVE
+# IMPORTANCE PLOTS
 # ------------------------------------------------------------
+
+p_pts_imp <- make_imp_plot(
+  "PTS",
+  "Pterocles alchata"
+)
+
+p_bbs_imp <- make_imp_plot(
+  "BBS",
+  "Pterocles orientalis"
+)
+
+p_imp_final <- p_pts_imp / p_bbs_imp
 
 ggsave(
-  filename = "PDP_FINAL.png",
-  plot = p,
-  path = base_path,
-  width = 12,
-  height = 6,
-  dpi = 300
+  file.path(plot_dir_imp,"Importance_FINAL.png"),
+  p_imp_final,
+  width = 10,
+  height = 14,
+  dpi = 600,
+  bg = "white"
 )
+
+cat("\nIMPORTANCE FIGURE SAVED\n")
+
+############################################
+# PDPs
+############################################
+
+species_list <- c("PTS","BBS")
+
+methods <- data.frame(
+  method = "Random",
+  file = "pseudoabsences_Random_env.csv"
+)
+
+# ------------------------------------------------------------
+# TOP VARIABLES
+# ------------------------------------------------------------
+
+top_vars <- importance_all %>%
+  
+  group_by(species, variable) %>%
+  
+  summarise(
+    mean_imp = mean(MDA_abs),
+    .groups = "drop"
+  ) %>%
+  
+  group_by(species) %>%
+  
+  arrange(desc(mean_imp)) %>%
+  
+  slice_head(n = 8)
+
+# ------------------------------------------------------------
+# PDP STORAGE
+# ------------------------------------------------------------
+
+all_pdp <- data.frame()
+
+# ------------------------------------------------------------
+# LOOP
+# ------------------------------------------------------------
+
+for(sp in species_list){
+  
+  cat("\n====================================\n")
+  cat("Species:", sp, "\n")
+  cat("====================================\n")
+  
+  # ------------------------------------------------------------
+  # LOAD DATA
+  # ------------------------------------------------------------
+  
+  data_pts <- read.csv(
+    file.path(
+      base_path,
+      paste0(sp,"_",methods$file)
+    )
+  )
+  
+  data_model <- data_pts %>%
+    
+    mutate(
+      presence = factor(
+        presence,
+        levels = c(0,1)
+      )
+    ) %>%
+    
+    dplyr::select(
+      -birdID,
+      -date,
+      -species,
+      -Tmin,
+      -Tmax,
+      -TminSD100,
+      -TmaxSD100,
+      -AltRange,
+      -Aspect,
+      -LC_RiceFields,
+      -LC_Greenhouses
+    ) %>%
+    
+    na.omit()
+  
+  vars_sp <- top_vars %>%
+    
+    filter(species == sp) %>%
+    
+    pull(variable)
+  
+  # ------------------------------------------------------------
+  # GRID
+  # ------------------------------------------------------------
+  
+  grid_list <- lapply(
+    vars_sp,
+    
+    function(var){
+      
+      rng <- range(
+        data_model[[var]],
+        na.rm = TRUE
+      )
+      
+      seq(
+        rng[1],
+        rng[2],
+        length.out = 50
+      )
+    }
+  )
+  
+  names(grid_list) <- vars_sp
+  
+  # ------------------------------------------------------------
+  # LOAD MODELS
+  # ------------------------------------------------------------
+  
+  fold_models <- lapply(
+    1:5,
+    
+    function(k){
+      
+      readRDS(
+        file.path(
+          model_dir,
+          
+          paste0(
+            "RF_",
+            sp,
+            "_Random_fold",
+            k,
+            ".rds"
+          )
+        )
+      )
+    }
+  )
+  
+  # ------------------------------------------------------------
+  # PDPs
+  # ------------------------------------------------------------
+  
+  pdp_list <- list()
+  
+  for(k in 1:5){
+    
+    cat("Fold:", k, "\n")
+    
+    rf_model <- fold_models[[k]]
+    
+    set.seed(1000 + k)
+    
+    train_sample <- data_model %>%
+      
+      slice_sample(
+        n = min(5000,nrow(data_model))
+      )
+    
+    pd_fold <- lapply(
+      vars_sp,
+      
+      function(var){
+        
+        grid_df <- data.frame(
+          value = grid_list[[var]]
+        )
+        
+        colnames(grid_df) <- var
+        
+        pd <- partial(
+          rf_model,
+          pred.var = var,
+          pred.grid = grid_df,
+          train = train_sample,
+          prob = TRUE,
+          which.class = 2
+        )
+        
+        colnames(pd)[1] <- "value"
+        
+        pd$variable <- var
+        pd$fold <- k
+        pd$species <- sp
+        
+        pd
+      }
+    )
+    
+    pdp_list[[k]] <- bind_rows(pd_fold)
+  }
+  
+  pdp_df <- bind_rows(pdp_list)
+  
+  all_pdp <- rbind(all_pdp,pdp_df)
+}
+
+# ------------------------------------------------------------
+# PDP SUMMARY
+# ------------------------------------------------------------
+
+pdp_summary <- all_pdp %>%
+  
+  group_by(species, variable, value) %>%
+  
+  summarise(
+    mean_yhat = mean(yhat),
+    sd_yhat = sd(yhat),
+    .groups = "drop"
+  )
+
+pdp_summary$label <- var_labels[
+  pdp_summary$variable
+]
+
+# ------------------------------------------------------------
+# PDP FUNCTION
+# ------------------------------------------------------------
+
+make_pdp_plot <- function(
+    df,
+    latin,
+    line_col,
+    fill_col
+){
+  
+  ggplot(df, aes(x = value)) +
+    
+    geom_ribbon(
+      aes(
+        ymin = mean_yhat - sd_yhat,
+        ymax = mean_yhat + sd_yhat
+      ),
+      fill = fill_col,
+      alpha = 0.3
+    ) +
+    
+    geom_line(
+      aes(y = mean_yhat),
+      color = line_col,
+      linewidth = 1
+    ) +
+    
+    facet_wrap(
+      ~label,
+      scales = "free_x",
+      ncol = 4
+    ) +
+    
+    theme_bw(base_size = 14) +
+    
+    theme(
+      strip.text = element_text(
+        face = "bold",
+        size = 11
+      ),
+      
+      axis.text = element_text(
+        color = "black"
+      ),
+      
+      plot.title = element_text(
+        face = "italic",
+        hjust = 0.5,
+        size = 20
+      )
+    ) +
+    
+    labs(
+      title = latin,
+      x = "Environmental gradient",
+      y = "Predicted suitability"
+    )
+}
+
+# ------------------------------------------------------------
+# PTS
+# ------------------------------------------------------------
+
+p_pts <- make_pdp_plot(
+  
+  pdp_summary %>%
+    filter(species == "PTS"),
+  
+  expression(
+    "Partial dependence plots — " *
+      italic("Pterocles alchata")
+  ),
+  
+  "#3B6FB6",
+  
+  "#95b8f6"
+)
+
+ggsave(
+  file.path(plot_dir_pdp,"PDP_FINAL_PTS.png"),
+  p_pts,
+  width = 15,
+  height = 7,
+  dpi = 600,
+  bg = "white"
+)
+
+# ------------------------------------------------------------
+# BBS
+# ------------------------------------------------------------
+
+p_bbs <- make_pdp_plot(
+  
+  pdp_summary %>%
+    filter(species == "BBS"),
+  
+  expression(
+    "Partial dependence plots — " *
+      italic("Pterocles orientalis")
+  ),
+  
+  "#D95F02",
+  
+  "#FDB863"
+)
+
+ggsave(
+  file.path(plot_dir_pdp,"PDP_FINAL_BBS.png"),
+  p_bbs,
+  width = 15,
+  height = 7,
+  dpi = 600,
+  bg = "white"
+)
+
+cat("\nFINAL PDP FIGURES SAVED\n")
+
+

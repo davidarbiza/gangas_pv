@@ -1,6 +1,6 @@
 ############################################
 # Random Forest ntree tuning
-# Species: BBS
+# Species: PTS
 # Pseudoabsences: Random / MCP40 / P95
 # Repetitions: 5
 ############################################
@@ -21,17 +21,17 @@ set.seed(453)
 methods <- c("Random", "MCP40", "P95")
 
 # ------------------------------------------------------------
-# File names (explicit mapping)
+# File names
 # ------------------------------------------------------------
 file_names <- c(
-  Random = "BBS_pseudoabsences_Random_env.csv",
-  MCP40  = "BBS_pseudoabsences_MCP40_decay_env.csv",
-  P95    = "BBS_pseudoabsences_P95_decay_env.csv"
+  Random = "PTS_pseudoabsences_Random_env.csv",
+  MCP40  = "PTS_pseudoabsences_MCP40_decay_env.csv",
+  P95    = "PTS_pseudoabsences_P95_decay_env.csv"
 )
 # ------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------
-base_path <- "E:/TFM_gangas/GPS/ExtractedV.3/"
+base_path <- "E:/TFM_gangas/GPS/ExtractedV.4/"
 out_dir   <- paste0(base_path, "Hyperparameter")
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
@@ -90,7 +90,7 @@ results <- data.frame(
 )
 
 # ------------------------------------------------------------
-# Run tuning (MEMORY-SAFE PARALLELIZATION)
+# Run tuning
 # ------------------------------------------------------------
 tic("RF ntree tuning (OOB error)")
 
@@ -156,7 +156,7 @@ registerDoSEQ()
 # ------------------------------------------------------------
 write.csv(
   results,
-  file.path(out_dir, "RF_ntree_tuning_BBS_ALL_raw.csv"),
+  file.path(out_dir, "RF_ntree_tuning_PTS_ALL_raw.csv"),
   row.names = FALSE
 )
 
@@ -173,7 +173,7 @@ summary_ntree <- results %>%
 
 write.csv(
   summary_ntree,
-  file.path(out_dir, "RF_ntree_tuning_BBS_ALL_summary.csv"),
+  file.path(out_dir, "RF_ntree_tuning_PTS_ALL_summary.csv"),
   row.names = FALSE
 )
 
@@ -214,7 +214,7 @@ ggplot(summary_ntree, aes(x = ntree, y = mean_OOB)) +
 ############################################
 # Random Forest hyperparameter tuning
 # (mtry + nodesize) using OOB error
-# Species: BBS
+# Species: PTS
 # Pseudoabsences: Random / MCP40 / P95
 ############################################
 
@@ -235,22 +235,22 @@ set.seed(453)
 methods <- c("Random", "MCP40", "P95")
 
 # ------------------------------------------------------------
-# File names (explicit mapping)
+# File names
 # ------------------------------------------------------------
 file_names <- c(
-  Random = "BBS_pseudoabsences_Random_env.csv",
-  MCP40  = "BBS_pseudoabsences_MCP40_decay_env.csv",
-  P95    = "BBS_pseudoabsences_P95_decay_env.csv"
+  Random = "PTS_pseudoabsences_Random_env.csv",
+  MCP40  = "PTS_pseudoabsences_MCP40_decay_env.csv",
+  P95    = "PTS_pseudoabsences_P95_decay_env.csv"
 )
 
 # ------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------
-base_path <- "E:/TFM_gangas/GPS/ExtractedV.3/"
+base_path <- "E:/TFM_gangas/GPS/ExtractedV.4/"
 out_dir   <- paste0(base_path, "Hyperparameter")
 
 # ------------------------------------------------------------
-# Parallel setup (MEMORY SAFE)
+# Parallel setup
 # ------------------------------------------------------------
 n_cores <- 2
 cl <- makeCluster(n_cores)
@@ -312,7 +312,7 @@ results <- data.frame(
 )
 
 # ------------------------------------------------------------
-# Run tuning (MEMORY-SAFE)
+# Run tuning
 # ------------------------------------------------------------
 tic("RF hyperparameter tuning")
 
@@ -403,7 +403,7 @@ writeData(wb, "Summary", summary_results)
 
 saveWorkbook(
   wb,
-  file.path(out_dir, "RF_hyperparameter_tuning_ALL.xlsx"),
+  file.path(out_dir, "RF_hyperparameter_tuning_PTS.xlsx"),
   overwrite = TRUE
 )
 
@@ -445,7 +445,7 @@ heatmap_plot <- ggplot(plot_data,
   labs(
     x = "Node size",
     y = "mtry",
-    title = "Hyperparameter optimization of Random Forest model"
+    title = "Hyperparameter optimization of Random Forest model for PTS"
   ) +
   
   coord_fixed() +
@@ -468,7 +468,7 @@ print(heatmap_plot)
 # Save heatmap
 # ------------------------------------------------------------
 ggsave(
-  filename = file.path(out_dir, "RF_hyperparameter_heatmap_ALL.png"),
+  filename = file.path(out_dir, "RF_hyperparameter_heatmap_PTS.png"),
   plot = heatmap_plot,
   width = 9,
   height = 6,

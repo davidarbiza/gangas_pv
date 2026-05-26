@@ -24,7 +24,7 @@ terraOptions(
 # ------------------------------------------------------------
 base_dir <- "E:/TFM_gangas"
 gps_dir  <- file.path(base_dir, "GPS", "MergedV.2")
-out_dir  <- file.path(base_dir, "GPS", "ExtractedV.3")
+out_dir  <- file.path(base_dir, "GPS", "ExtractedV.4")
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 csv_files <- file.path(
@@ -294,18 +294,43 @@ library(lubridate)
 library(tictoc)
 
 base_dir <- "E:/TFM_gangas"
-in_dir   <- file.path(base_dir,"GPS","ExtractedV.3")
+in_dir   <- file.path(base_dir,"GPS","ExtractedV.4")
 
 csv_files <- list.files(in_dir, pattern="_env\\.csv$", full.names=TRUE)
 
 clim_base <- file.path(base_dir,"Climaticas","10_days")
 
 clim_files <- list(
-  Tmin       = list.files(file.path(clim_base,"Tmin","300m"), pattern="\\.tif$", full.names=TRUE),
-  TminSD100  = list.files(file.path(clim_base,"Tmin","300m"), pattern="sd",   full.names=TRUE),
-  Tmax       = list.files(file.path(clim_base,"Tmax","300m"), pattern="\\.tif$", full.names=TRUE),
-  TmaxSD100  = list.files(file.path(clim_base,"Tmax","300m"), pattern="sd",   full.names=TRUE),
-  Prcp       = list.files(file.path(clim_base,"Prcp","300m"), pattern="\\.tif$", full.names=TRUE)
+
+  Tmin = list.files(
+    file.path(clim_base,"Tmin","300m"),
+    pattern = "^Tmin_mean_.*\\.tif$",
+    full.names = TRUE
+  ),
+
+  TminSD100 = list.files(
+    file.path(clim_base,"Tmin","300m"),
+    pattern = "^Tmin_sd_.*\\.tif$",
+    full.names = TRUE
+  ),
+
+  Tmax = list.files(
+    file.path(clim_base,"Tmax","300m"),
+    pattern = "^Tmax_mean_.*\\.tif$",
+    full.names = TRUE
+  ),
+
+  TmaxSD100 = list.files(
+    file.path(clim_base,"Tmax","300m"),
+    pattern = "^Tmax_sd_.*\\.tif$",
+    full.names = TRUE
+  ),
+
+  Prcp = list.files(
+    file.path(clim_base,"Prcp","300m"),
+    pattern = "^Prcp_sum_.*\\.tif$",
+    full.names = TRUE
+  )
 )
 
 for(csv in csv_files){
@@ -320,19 +345,35 @@ for(csv in csv_files){
   
   for(v in names(clim_files)){
     pts[[v]] <- NA_real_
-    r <- rast(clim_files[[v]][1])
+    years_pts <- unique(year(pts$date))
     
-    bidx <- band_idx
-    bidx[bidx > nlyr(r)] <- nlyr(r)
-    
-    for(b in unique(bidx)){
-      idx <- which(bidx == b)
-      pts[[v]][idx] <- terra::extract(r[[b]], pts_vect[idx,])[,2] / 100
+    for(yr in years_pts){
+      
+      # Select raster for correct year
+      r_file <- clim_files[[v]][grepl(yr, clim_files[[v]])]
+      
+      r <- rast(r_file)
+      
+      idx_year <- which(year(pts$date) == yr)
+      
+      bidx <- band_idx[idx_year]
+      
+      bidx[bidx > nlyr(r)] <- nlyr(r)
+      
+      for(b in unique(bidx)){
+        
+        idx <- idx_year[bidx == b]
+        
+        pts[[v]][idx] <- terra::extract(
+          r[[b]],
+          pts_vect[idx,]
+        )[,2] / 100
+      }
+      
+      rm(r)
+      gc()
     }
-    
-    rm(r); gc()
   }
-  
   write.csv(pts, csv, row.names = FALSE)
   toc()
 }
@@ -349,9 +390,19 @@ library(lubridate)
 library(tictoc)
 
 base_dir <- "E:/TFM_gangas"
-in_dir   <- file.path(base_dir,"GPS","ExtractedV.3")
+in_dir   <- file.path(base_dir,"GPS","ExtractedV.4")
 
-csv_files <- file.path(in_dir, "BBS_pseudoabsences_Random_env.csv")
+csv_files <- file.path(
+  in_dir,
+  c(
+    "BBS_pseudoabsences_MCP40_decay_env.csv",
+    "BBS_pseudoabsences_P95_decay_env.csv",
+    "BBS_pseudoabsences_Random_env.csv",
+    "PTS_pseudoabsences_MCP40_decay_env.csv",
+    "PTS_pseudoabsences_P95_decay_env.csv",
+    "PTS_pseudoabsences_Random_env.csv"
+  )
+)
 
 clim_base <- file.path(base_dir,"Climaticas","10_days")
 
@@ -426,10 +477,10 @@ library(patchwork)
 # ------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------
-base_path <- "E:/TFM_gangas/GPS/ExtractedV.3"
+base_path <- "E:/TFM_gangas/GPS/ExtractedV.4"
 
 files <- list(
-  PTS = file.path(base_path, "BBS_pseudoabsences_Random_env.csv"),
+  PTS = file.path(base_path, "PTS_pseudoabsences_Random_env.csv"),
   BBS = file.path(base_path, "BBS_pseudoabsences_Random_env.csv")
 )
 
@@ -551,13 +602,16 @@ saveWorkbook(
 cat("\nCorrelation and VIF analysis completed\n")
 
 
-############################################
-# Predictor–Response relationship
-# 2 species – Random pseudoabsences
-############################################
 
-# --- Load libraries ---
+
+
+####################################################################
+# Environmental distributions of presences and pseudoabsences
+####################################################################
+
 library(dplyr)
+library(ggplot2)
+library(tidyr)
 library(openxlsx)
 
 set.seed(123)
@@ -565,13 +619,43 @@ set.seed(123)
 # ------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------
-base_path <- "E:/TFM_gangas/GPS/ExtractedV.2"
+
+base_path <- "E:/TFM_gangas/GPS/ExtractedV.4"
+
+plot_dir <- file.path(
+  base_path,
+  "Environmental_niche_plots"
+)
+
+dir.create(plot_dir, showWarnings = FALSE)
+
+# ------------------------------------------------------------
+# Species and pseudoabsence methods
+# ------------------------------------------------------------
 
 species_list <- c("PTS", "BBS")
+
+methods <- data.frame(
+  
+  method = c(
+    "Random",
+    "P95",
+    "MCP40"
+  ),
+  
+  file = c(
+    "pseudoabsences_Random_env.csv",
+    "pseudoabsences_P95_decay_env.csv",
+    "pseudoabsences_MCP40_decay_env.csv"
+  ),
+  
+  stringsAsFactors = FALSE
+)
 
 # ------------------------------------------------------------
 # Excel workbook
 # ------------------------------------------------------------
+
 wb <- createWorkbook()
 
 ############################################
@@ -580,261 +664,245 @@ wb <- createWorkbook()
 
 for (sp in species_list) {
   
-  cat("\n====================================\n")
-  cat("Species:", sp, "\n")
-  cat("====================================\n")
-  
-  # --- Load data ---
-  env <- read.csv(
-    file.path(base_path, paste0(sp, "_pseudoabsences_Random_env.csv"))
-  )
-  
-  # --- Prepare data ---
-  env <- env %>%
-    mutate(presence = factor(presence, levels = c(0, 1))) %>%
-    dplyr::select(
-      -birdID,
-      -date,
-      -species,
-      -X_25830,
-      -Y_25830
-    ) %>%
-    na.omit()
-  
-  # --- Keep only numeric predictors ---
-  predictors <- env %>%
-    dplyr::select(-presence)
-  
-  # ------------------------------------------------------------
-  # Compute summary statistics
-  # ------------------------------------------------------------
-  
-  summary_table <- data.frame(
-    Variable = names(predictors),
-    Mean_presence = NA,
-    SD_presence = NA,
-    Mean_absence = NA,
-    SD_absence = NA,
-    Difference_mean = NA
-  )
-  
-  for (i in seq_along(predictors)) {
+  for (m in 1:nrow(methods)) {
     
-    var_name <- names(predictors)[i]
+    cat("\n====================================\n")
+    cat("Species:", sp, "\n")
+    cat("Method:", methods$method[m], "\n")
+    cat("====================================\n")
     
-    pres_vals <- predictors[[var_name]][env$presence == 1]
-    abs_vals  <- predictors[[var_name]][env$presence == 0]
+    # ------------------------------------------------------------
+    # Load data
+    # ------------------------------------------------------------
     
-    summary_table$Mean_presence[i]  <- mean(pres_vals)
-    summary_table$SD_presence[i]    <- sd(pres_vals)
-    summary_table$Mean_absence[i]   <- mean(abs_vals)
-    summary_table$SD_absence[i]     <- sd(abs_vals)
-    summary_table$Difference_mean[i] <- 
-      summary_table$Mean_presence[i] - summary_table$Mean_absence[i]
+    env <- read.csv(
+      file.path(
+        base_path,
+        paste0(sp, "_", methods$file[m])
+      )
+    )
+    
+    # ------------------------------------------------------------
+    # Prepare data
+    # ------------------------------------------------------------
+    
+    env <- env %>%
+      
+      mutate(
+        presence = factor(
+          presence,
+          levels = c(0,1),
+          labels = c(
+            "Pseudoabsence",
+            "Presence"
+          )
+        )
+      ) %>%
+      
+      dplyr::select(
+        -birdID,
+        -date,
+        -species,
+        -X_25830,
+        -Y_25830
+      ) %>%
+      
+      na.omit()
+    
+    # ------------------------------------------------------------
+    # Keep only predictors
+    # ------------------------------------------------------------
+    
+    predictors <- env %>%
+      dplyr::select(-presence)
+    
+    # ------------------------------------------------------------
+    # Summary statistics
+    # ------------------------------------------------------------
+    
+    summary_table <- data.frame(
+      Variable = names(predictors),
+      Mean_presence = NA,
+      SD_presence = NA,
+      Mean_absence = NA,
+      SD_absence = NA,
+      Difference_mean = NA
+    )
+    
+    for (i in seq_along(predictors)) {
+      
+      var_name <- names(predictors)[i]
+      
+      pres_vals <- predictors[[var_name]][env$presence == "Presence"]
+      
+      abs_vals  <- predictors[[var_name]][env$presence == "Pseudoabsence"]
+      
+      summary_table$Mean_presence[i] <- mean(pres_vals)
+      
+      summary_table$SD_presence[i] <- sd(pres_vals)
+      
+      summary_table$Mean_absence[i] <- mean(abs_vals)
+      
+      summary_table$SD_absence[i] <- sd(abs_vals)
+      
+      summary_table$Difference_mean[i] <-
+        summary_table$Mean_presence[i] -
+        summary_table$Mean_absence[i]
+    }
+    
+    # ------------------------------------------------------------
+    # Save Excel sheet
+    # ------------------------------------------------------------
+    
+    sheet_name <- paste(
+      sp,
+      methods$method[m],
+      sep = "_"
+    )
+    
+    addWorksheet(
+      wb,
+      sheet_name
+    )
+    
+    writeData(
+      wb,
+      sheet_name,
+      summary_table
+    )
+    
+    # ------------------------------------------------------------
+    # Long format for plots
+    # ------------------------------------------------------------
+    
+    env_long <- env %>%
+      pivot_longer(
+        cols = -presence,
+        names_to = "variable",
+        values_to = "value"
+      )
+    
+    # ------------------------------------------------------------
+    # Plot
+    # ------------------------------------------------------------
+    
+    p <- ggplot(
+      env_long,
+      aes(
+        x = value,
+        fill = presence
+      )
+    ) +
+      
+      geom_density(
+        alpha = 0.5,
+        color = NA
+      ) +
+      
+      facet_wrap(
+        ~variable,
+        scales = "free",
+        ncol = 4
+      ) +
+      
+      scale_fill_manual(
+        values = c(
+          "Pseudoabsence" = "#BDBDBD",
+          "Presence" = "#2C7FB8"
+        )
+      ) +
+      
+      theme_classic(base_size = 14) +
+      
+      theme(
+        legend.position = "top",
+        legend.title = element_blank(),
+        
+        strip.text = element_text(
+          face = "bold",
+          size = 11
+        ),
+        
+        axis.title = element_text(
+          face = "bold"
+        ),
+        
+        axis.text = element_text(
+          color = "black"
+        ),
+        
+        plot.title = element_text(
+          face = "bold",
+          hjust = 0.5,
+          size = 14
+        )
+      ) +
+      
+      labs(
+        title = paste(
+          "Environmental niche distributions -",
+          sp,
+          "-",
+          methods$method[m]
+        ),
+        
+        subtitle = "Presence vs pseudoabsence distributions",
+        
+        x = "Environmental gradient",
+        
+        y = "Density"
+      )
+    
+    # ------------------------------------------------------------
+    # Save plot
+    # ------------------------------------------------------------
+    
+    ggsave(
+      filename = paste0(
+        "Environmental_niche_",
+        sp,
+        "_",
+        methods$method[m],
+        ".png"
+      ),
+      
+      plot = p,
+      
+      path = plot_dir,
+      
+      width = 15,
+      height = 10,
+      dpi = 300
+    )
+    
+    rm(
+      env,
+      predictors,
+      summary_table,
+      env_long,
+      p
+    )
+    
+    gc()
   }
-  
-  # ------------------------------------------------------------
-  # Save sheet
-  # ------------------------------------------------------------
-  
-  addWorksheet(wb, sp)
-  writeData(wb, sp, summary_table)
-  
-  rm(env, predictors, summary_table)
-  gc()
 }
 
 # ------------------------------------------------------------
-# Save Excel
+# Save Excel workbook
 # ------------------------------------------------------------
+
 saveWorkbook(
   wb,
-  file.path(base_path, "Predictor_Response.xlsx"),
+  file.path(
+    plot_dir,
+    "Environmental_niche_summary.xlsx"
+  ),
   overwrite = TRUE
 )
 
-cat("\nFINISHED — Excel saved\n")
+cat("\nFINISHED — Excel and plots saved\n")
 
 
-
-############################################
-# Predictor–Response multipanel plots
-############################################
-
-library(dplyr)
-library(ggplot2)
-library(tidyr)
-
-# ------------------------------------------------------------
-# Paths
-# ------------------------------------------------------------
-base_path <- "E:/TFM_gangas/GPS/ExtractedV.2"
-
-species_list <- c("PTS", "BBS")
-
-# ------------------------------------------------------------
-# Variables to plot
-# ------------------------------------------------------------
-vars_to_plot <- c(
-  "Altitude",
-  "Slope",
-  "Heterogeneity",
-  "NDVI",
-  "DistRoad",
-  "Tmean",
-  "LC_Forest",
-  "LC_AnnualCrops"
-)
-
-############################################
-# LOOP
-############################################
-
-for (sp in species_list) {
-  
-  cat("\nProcessing:", sp, "\n")
-  
-  # ------------------------------------------------------------
-  # Load data
-  # ------------------------------------------------------------
-  
-  env <- read.csv(
-    file.path(base_path, paste0(sp, "_pseudoabsences_Random_env.csv"))
-  )
-  
-  # ------------------------------------------------------------
-  # Prepare data
-  # ------------------------------------------------------------
-  
-  env <- env %>%
-    mutate(presence = factor(presence,
-                             levels = c(0,1),
-                             labels = c("Pseudoabsence","Presence"))) %>%
-    dplyr::select(
-      all_of(vars_to_plot),
-      presence
-    ) %>%
-    na.omit()
-  
-  # ------------------------------------------------------------
-  # Long format
-  # ------------------------------------------------------------
-  
-  env_long <- env %>%
-    pivot_longer(
-      cols = -presence,
-      names_to = "variable",
-      values_to = "value"
-    )
-  
-  # ------------------------------------------------------------
-  # Plot
-  # ------------------------------------------------------------
-  p <- ggplot(env_long, aes(x = value, fill = presence)) +
-    
-    geom_density(alpha = 0.5, color = NA) +
-    
-    facet_wrap(~variable, scales = "free", ncol = 4) +
-    
-    scale_fill_manual(
-      values = c(
-        "Pseudoabsence" = "#BDBDBD",
-        "Presence" = "#2C7FB8"
-      )
-    ) +
-    
-    theme_classic(base_size = 14) +
-    
-    theme(
-      legend.position = "top",
-      legend.title = element_blank(),
-      strip.text = element_text(face = "bold", size = 11),
-      axis.title = element_text(face = "bold"),
-      axis.text = element_text(color = "black"),
-      plot.title = element_text(face = "bold", hjust = 0.5, size = 14)
-    ) +
-    
-    labs(
-      title = paste("Predictor–response relationships -", sp),
-      subtitle = "Presence vs pseudoabsence distributions",
-      x = "Environmental gradient",
-      y = "Density"
-    )
-  # ------------------------------------------------------------
-  # Save
-  # ------------------------------------------------------------
-  
-  ggsave(
-    filename = paste0("Predictor_Response_", sp, ".png"),
-    plot = p,
-    path = base_path,
-    width = 12,
-    height = 8,
-    dpi = 300
-  )
-}
-
-cat("\nMultipanel plots generated successfully\n")
-
-
-
-
-# ------------------------------------------------------------
-# MULTIPANEL PREDICTOR-RESPONSE (PTS + BBS)
-# ------------------------------------------------------------
-
-library(png)
-library(grid)
-library(gridExtra)
-
-# ------------------------------------------------------------
-# Paths
-# ------------------------------------------------------------
-
-img_pts <- "E:/TFM_gangas/GPS/ExtractedV.2/Predictor_Response_PTS.png"
-img_bbs <- "E:/TFM_gangas/GPS/ExtractedV.2/Predictor_Response_BBS.png"
-
-out_file <- "E:/TFM_gangas/GPS/ExtractedV.2/Predictor_Response_multipanel.png"
-
-# ------------------------------------------------------------
-# LOAD IMAGES
-# ------------------------------------------------------------
-
-img1 <- readPNG(img_pts)
-img2 <- readPNG(img_bbs)
-
-g1 <- rasterGrob(img1, interpolate = TRUE)
-g2 <- rasterGrob(img2, interpolate = TRUE)
-
-# ------------------------------------------------------------
-# CREATE MULTIPANEL
-# ------------------------------------------------------------
-
-p <- grid.arrange(
-  g1, g2,
-  ncol = 1,
-  top = textGrob(
-    "Predictor-response relationships",
-    gp = gpar(fontsize = 16, fontface = "bold")
-  )
-)
-
-# ------------------------------------------------------------
-# SAVE
-# ------------------------------------------------------------
-
-png(out_file, width = 2000, height = 3000, res = 300)
-grid.arrange(
-  g1, g2,
-  ncol = 1,
-  top = textGrob(
-    "Predictor-response relationships",
-    gp = gpar(fontsize = 16, fontface = "bold")
-  )
-)
-dev.off()
-
-cat("\nMultipanel done\n")
 
 
 
@@ -852,6 +920,7 @@ library(openxlsx)
 # ------------------------------------------------------------
 base_gps <- "E:/TFM_gangas/GPS"
 merged_path <- file.path(base_gps, "MergedV.2")
+output_path <- file.path(base_gps, "ExtractedV.4")
 
 # ------------------------------------------------------------
 # FUNCTION
@@ -903,7 +972,7 @@ table1 <- data.frame(
 # TABLE 2 — PSEUDOABSENCES
 # ============================================================
 
-methods <- c("Random", "P95", "MCP40km")
+methods <- c("Random", "P95_decay", "MCP40_decay")
 
 table2_list <- list()
 
@@ -945,13 +1014,8 @@ writeData(wb, "Pseudoabsences", table2)
 
 saveWorkbook(
   wb,
-  file.path(base_gps, "COUNTING_DATA.xlsx"),
+  file.path(output_path, "COUNTING_DATA.xlsx"),
   overwrite = TRUE
 )
 
 cat("\nTables finished\n")
-
-
-
-
-

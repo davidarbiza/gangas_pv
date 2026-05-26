@@ -405,3 +405,120 @@ write_csv(bbs_final, "E:/TFM_gangas/GPS/MergedV.2/BBS_pseudoabsences_MCP40_decay
 write_csv(pts_final, "E:/TFM_gangas/GPS/MergedV.2/PTS_pseudoabsences_MCP40_decay.csv")
 
 cat("Done! MCP + 40 km pseudo-absences generated.\n")
+
+
+
+
+
+# ------------------------------------------------------------
+# COMPARE FIRST PSEUDOAUBSENCES METHODS VS DECAY METHODS
+# ------------------------------------------------------------
+library(sf)
+library(ggplot2)
+library(dplyr)
+
+# ============================================================
+# FILES
+# ============================================================
+
+files <- list(
+  
+  PTS_P95_V2 = "E:/TFM_gangas/GPS/ExtractedV.2/PTS_pseudoabsences_P95_env.csv",
+  PTS_P95_V3 = "E:/TFM_gangas/GPS/ExtractedV.3/PTS_pseudoabsences_P95_decay_env.csv",
+  
+  BBS_P95_V2 = "E:/TFM_gangas/GPS/ExtractedV.2/BBS_pseudoabsences_P95_env.csv",
+  BBS_P95_V3 = "E:/TFM_gangas/GPS/ExtractedV.3/BBS_pseudoabsences_P95_decay_env.csv",
+  
+  PTS_MCP_V2 = "E:/TFM_gangas/GPS/ExtractedV.2/PTS_pseudoabsences_MCP40km_env.csv",
+  PTS_MCP_V3 = "E:/TFM_gangas/GPS/ExtractedV.3/PTS_pseudoabsences_MCP40_decay_env.csv",
+  
+  BBS_MCP_V2 = "E:/TFM_gangas/GPS/ExtractedV.2/BBS_pseudoabsences_MCP40km_env.csv",
+  BBS_MCP_V3 = "E:/TFM_gangas/GPS/ExtractedV.3/BBS_pseudoabsences_MCP40_decay_env.csv"
+)
+
+# ============================================================
+# LOAD
+# ============================================================
+
+load_pa <- function(path, label){
+  
+  df <- read.csv(path)
+  
+  df <- df %>%
+    filter(presence == 0)
+  
+  sf_obj <- st_as_sf(
+    df,
+    coords = c("X_25830","Y_25830"),
+    crs = 25830
+  )
+  
+  sf_obj$dataset <- label
+  
+  return(sf_obj)
+}
+
+# ============================================================
+# PLOT FUNCTION
+# ============================================================
+
+plot_compare <- function(v2_name, v3_name, title){
+  
+  pa_v2 <- load_pa(files[[v2_name]], "V2")
+  pa_v3 <- load_pa(files[[v3_name]], "V3")
+  
+  all_pa <- rbind(pa_v2, pa_v3)
+  
+  p <- ggplot(all_pa) +
+    
+    geom_sf(aes(color = dataset),
+            alpha = 0.15,
+            size = 0.1) +
+    
+    facet_wrap(~dataset) +
+    
+    scale_color_manual(values = c(
+      "V2" = "#E64B35",
+      "V3" = "#4DBBD5"
+    )) +
+    
+    theme_void() +
+    
+    ggtitle(title)
+  
+  print(p)
+}
+
+# ============================================================
+# RUN
+# ============================================================
+
+x11()
+plot_compare(
+  "PTS_P95_V2",
+  "PTS_P95_V3",
+  "PTS — P95"
+)
+
+x11()
+plot_compare(
+  "BBS_P95_V2",
+  "BBS_P95_V3",
+  "BBS — P95"
+)
+
+x11()
+plot_compare(
+  "PTS_MCP_V2",
+  "PTS_MCP_V3",
+  "PTS — MCP40"
+)
+
+x11()
+plot_compare(
+  "BBS_MCP_V2",
+  "BBS_MCP_V3",
+  "BBS — MCP40"
+)
+
+

@@ -250,7 +250,7 @@ for (i in layers_to_check) {
 # 5. QUICK VISUAL CHECK
 # =============================
 
-par(mfrow = c(1,2))S
+par(mfrow = c(1,2))
 plot(orig[[1]], main = "Original raster - layer 1")
 plot(proj[[1]], main = "Reprojected raster - layer 1")
 par(mfrow = c(1,1))

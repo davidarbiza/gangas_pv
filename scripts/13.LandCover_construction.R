@@ -153,7 +153,7 @@ library(terra)
 # PATHS
 # -----------------------
 base_dir <- "E:/TFM_gangas/UsosSuelo/LULUCF/"
-ndvi_template_file <- "E:/TFM_gangas/NDVI/SpainReprojected/c_gls_NDVI300_201601010000_GLOBE_PROBAV_V1.0.1_25830.tif"
+ndvi_template_file <- "E:/TFM_gangas/NDVI/SpainReprojected/300m/c_gls_NDVI300_201601010000_GLOBE_PROBAV_V1.0.1_25830_300m.tif"
 
 out_dir <- file.path(base_dir, "300m")
 dir.create(out_dir, showWarnings = FALSE)
@@ -263,7 +263,7 @@ library(terra)
 # -----------------------
 base_dir <- "E:/TFM_gangas/UsosSuelo/COS2023/"
 gpkg_file <- file.path(base_dir, "Originales/COS2023v1-S2.gpkg")
-ndvi_template_file <- "E:/TFM_gangas/NDVI/SpainReprojected/c_gls_NDVI300_201601010000_GLOBE_PROBAV_V1.0.1_25830.tif"
+ndvi_template_file <- "E:/TFM_gangas/NDVI/SpainReprojected/300m/c_gls_NDVI300_201601010000_GLOBE_PROBAV_V1.0.1_25830_300m.tif"
 
 out_dir <- file.path(base_dir, "300m")
 dir.create(out_dir, showWarnings = FALSE)
@@ -403,9 +403,6 @@ cat("\nCOS2023 processing completed.\n")
 
 
 
-
-
-
 ################################ 
 # LC FREQUENCY CHECK
 ################################
@@ -463,130 +460,6 @@ cat("\nLC frequency Excel saved successfully\n")
 
 
 
-
-
-################################ 
-# CLC2018 CROP AND REPROJECT SCRIPT
-################################
-
-library(terra)
-library(sf)
-
-# -----------------------
-# PATHS
-# -----------------------
-base_folder <- "E:/TFM_gangas/LULUCF/CLC2018/"
-clc_file <- "U2018_CLC2018_V2020_20u1.tif"
-
-# -----------
-# MASK BBOX 
-# -----------
-peninsula_bbox <- st_bbox(c(xmin = -10, ymin = 35.5, xmax = 5, ymax = 44.5), crs = 4326)
-mask <- vect(st_as_sfc(peninsula_bbox))
-
-# -----------------------
-# CROP AND REPROJECT TO EPSG:25830
-# -----------------------
-cat("Cropping and reprojecting CLC raster to EPSG:25830...\n")
-
-r <- rast(paste0(base_folder, clc_file))
-
-# Reproject mask to raster CRS
-mask_proj <- project(mask, crs(r))
-
-# Crop raster to mask
-r_crop <- crop(r, mask_proj)
-
-# Reproject cropped raster to EPSG:25830 using nearest neighbor
-r_25830 <- project(r_crop, "EPSG:25830", method="near")
-
-# Save reprojected raster
-reprojected_file <- paste0(base_folder, "CLC2018_PB.tif")
-writeRaster(r_25830, reprojected_file, overwrite=TRUE)
-
-cat("Reprojected raster saved:", reprojected_file, "\n")
-
-
-
-
-################################ 
-# CLC2018 FINAL RECLASSIFICATION SCRIPT
-################################
-
-library(terra)
-
-# -----------------------
-# PATHS
-# -----------------------
-base_folder <- "E:/TFM_gangas/LULUCF/CLC2018/"
-intermediate_file <- "CLC2018_PB.tif" 
-
-# -----------------------
-# FINAL CLASS VALUES 
-# -----------------------
-classes <- c(
-  "Bosques" = 1,
-  "Olivares" = 2,
-  "Viñedos" = 3,
-  "Otros cultivos perennes" = 4,
-  "Arrozales" = 5,
-  "Invernaderos" = 6,
-  "Cultivos anuales de secano" = 7,
-  "Pastizales con árboles" = 8,
-  "Pastizales arbustivos" = 9,
-  "Pastizales herbáceos" = 10,
-  "Zonas acuáticas" = 11,
-  "Marismas" = 12,
-  "Áreas artificiales" = 13,
-  "Otras tierras" = 14,
-  "Mosaico de cultivos complejos" = 15,
-  "Cultivos anuales de regadío" = 16,
-  "NODATA" = 999
-)
-
-class_table <- data.frame(
-  value = unname(classes),
-  class = names(classes)
-)
-
-# -----------------------
-# CLC RECLASS MATRIX
-# -----------------------
-clc_matrix <- matrix(c(
-  1,13,  2,13,  3,13,  4,13,  5,13,  6,13,
-  7,13,  8,13,  9,13, 10,13, 11,13,
-  12,7, 13,16, 14,5, 15,3, 16,4, 17,2,
-  18,10, 19,15, 20,15, 21,15, 22,15,
-  23,1, 24,1, 25,1, 26,10, 27,9, 28,10, 29,8,
-  30,14, 31,14, 32,14, 33,14, 34,14,
-  35,11, 36,11, 37,12, 38,11, 39,11,
-  40,11, 41,11, 42,11, 43,11, 44,11,
-  48,999
-), ncol=2, byrow=TRUE)
-
-# -----------------------
-# PROCESS CLC FINAL RECLASS
-# -----------------------
-cat("Loading intermediate CLC raster...\n")
-r <- rast(paste0(base_folder, intermediate_file))
-
-cat("Reclassifying CLC raster...\n")
-r_reclass <- classify(r, clc_matrix, others=999)
-
-# Assign ordered class labels
-levels(r_reclass) <- class_table
-
-# Save final raster
-out_name <- paste0(base_folder, "CLC2018_PB_Reclass.tif")
-writeRaster(r_reclass, out_name, overwrite=TRUE)
-
-rm(r, r_reclass); gc()
-cat("CLC2018 reclassified raster saved:", out_name, "\n")
-cat("CLC2018 processing completed successfully!\n")
-
-
-
-
 #############################
 # RECLASS RASTER CHECK SCRIPT
 #############################
@@ -608,7 +481,7 @@ check_reclass <- function(path) {
   print(values_present)
   
   # Expected class system
-  expected <- c(1:15, 999)
+  expected <- 1:14
   
   missing <- setdiff(expected, values_present)
   extra   <- setdiff(values_present, expected)
@@ -624,19 +497,7 @@ check_reclass <- function(path) {
   cat("\nCell count per class:\n")
   print(f)
   
-  total_cells <- sum(f$count)
-  
-  if (999 %in% values_present) {
-    nodata_cells <- f$count[f$value == 999]
-    cat("\nNODATA cells:", nodata_cells,
-        sprintf("(%.2f%% of raster)\n", 100 * nodata_cells / total_cells))
-  }
-  
   # Red flags
-  if (length(values_present) == 1 && values_present == 999) {
-    cat("WARNING: Raster is entirely NODATA\n")
-  }
-  
   if (any(values_present > 100 & !values_present %in% expected)) {
     cat("WARNING: Looks like original land cover codes remain\n")
   }
@@ -656,129 +517,3 @@ files <- c(
 for (f in files) {
   check_reclass(paste0(base, f))
 }
-
-
-
-################################
-# CLC2018 REMOVE NODATA SCRIPT
-################################
-
-library(terra)
-
-# -----------------------
-# PATHS
-# -----------------------
-base_folder <- "E:/TFM_gangas/LULUCF/CLC2018/"
-clc_file <- "CLC2018_PB_Reclass.tif"
-
-# -----------------------
-# LOAD RASTER
-# -----------------------
-r <- rast(paste0(base_folder, clc_file))
-
-# -----------------------
-# REMOVE NODATA CELLS
-# -----------------------
-# NODATA value = 999
-r_noNODATA <- r
-r_noNODATA[r_noNODATA == 999] <- NA
-
-# -----------------------
-# SAVE NEW RASTER
-# -----------------------
-out_file <- paste0(base_folder, "CLC2018_PB_NoNODATA.tif")
-writeRaster(r_noNODATA, out_file, overwrite=TRUE)
-
-cat("CLC2018 raster without NODATA saved as:\n", out_file, "\n")
-
-
-
-
-
-
-################################
-# CLC2018 CLASS PERCENTAGE SCRIPT (aligned to 300 m)
-################################
-
-library(terra)
-library(openxlsx)
-
-# -----------------------
-# PATHS
-# -----------------------
-base_folder <- "E:/TFM_gangas/LULUCF/"
-files <- list(
-  LULUCF2015 = paste0(base_folder, "LULUCF2015_PB_Reclass.tif"),
-  LULUCF2018 = paste0(base_folder, "LULUCF2018_PB_Reclass.tif"),
-  LULUCF2021 = paste0(base_folder, "LULUCF2021_PB_Reclass.tif"),
-  COS2023    = paste0(base_folder, "COS2023v1-S2_Reclass.tif"),
-  CLC2018    = paste0(base_folder, "CLC2018/CLC2018_PB_NoNODATA.tif") # nuevo sin NODATA
-)
-
-# -----------------------
-# CLASS NAMES
-# -----------------------
-class_names <- c(
-  "1" = "Bosques",
-  "2" = "Olivares",
-  "3" = "Viñedos",
-  "4" = "Otros cultivos perennes",
-  "5" = "Arrozales",
-  "6" = "Invernaderos",
-  "7" = "Cultivos anuales de secano",
-  "8" = "Pastizales con árboles",
-  "9" = "Pastizales arbustivos",
-  "10" = "Pastizales herbáceos",
-  "11" = "Zonas acuáticas",
-  "12" = "Marismas",
-  "13" = "Áreas artificiales",
-  "14" = "Otras tierras",
-  "15" = "Mosaico de cultivos complejos",
-  "16" = "Cultivos anuales de regadío"
-)
-
-# -----------------------
-# CREATE WORKBOOK
-# -----------------------
-wb <- createWorkbook()
-
-# -----------------------
-# DEFINE TEMPLATE (300 m, aligned to LULUCF2015)
-# -----------------------
-template <- rast(files$LULUCF2015)
-res(template) <- 300        # 300 m resolution
-origin(template) <- c(0,0)  # same origin
-
-# -----------------------
-# PROCESS FILES
-# -----------------------
-for (name in names(files)) {
-  cat("Processing", name, "...\n")
-  
-  r <- rast(files[[name]])
-  
-  # Resample to 300 m, aligned to template
-  r_resamp <- resample(r, template, method="near")
-  
-  # Frequency and percentage
-  f <- freq(r_resamp)
-  f$percentage <- round(100 * f$count / sum(f$count), 2)
-  f$class_name <- class_names[as.character(f$value)]
-  
-  f <- f[order(as.numeric(f$value)), c("value","class_name","count","percentage")]
-  names(f) <- c("Class value","Class name","Cell count","Percentage (%)")
-  
-  # Add sheet
-  addWorksheet(wb, name)
-  writeData(wb, name, f)
-}
-
-# -----------------------
-# SAVE EXCEL
-# -----------------------
-out_excel <- paste0(base_folder, "Class_percentage_Aligned.xlsx")
-saveWorkbook(wb, out_excel, overwrite=TRUE)
-cat("Class percentages saved in Excel:\n", out_excel, "\n")
-
-
-

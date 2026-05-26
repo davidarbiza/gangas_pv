@@ -1,3 +1,317 @@
+############################################
+# NATURA2000 PROPORTIONAL COVER (300 m)
+############################################
+
+library(terra)
+
+# ------------------------------------------------------------
+# PATHS
+# ------------------------------------------------------------
+
+base_dir <- "E:/TFM_gangas/PA"
+
+pa_file <- file.path(
+  base_dir,
+  "Natura2000_end2024.gpkg"
+)
+
+ndvi_template_file <- "E:/TFM_gangas/NDVI/SpainReprojected/300m/c_gls_NDVI300_201601010000_GLOBE_PROBAV_V1.0.1_25830_300m.tif"
+
+out_dir <- file.path(base_dir, "300m")
+
+dir.create(out_dir, showWarnings = FALSE)
+
+# ------------------------------------------------------------
+# LOAD NDVI TEMPLATE
+# ------------------------------------------------------------
+
+cat("\nLoading NDVI template...\n")
+
+ndvi_template <- rast(ndvi_template_file)
+
+# ------------------------------------------------------------
+# LOAD NATURA2000
+# ------------------------------------------------------------
+
+cat("\nLoading Natura2000...\n")
+
+v_pa <- vect(pa_file)
+
+# ------------------------------------------------------------
+# REPROJECT
+# ------------------------------------------------------------
+
+cat("\nReprojecting to EPSG:25830...\n")
+
+v_pa <- project(v_pa, "EPSG:25830")
+
+# ------------------------------------------------------------
+# KEEP GEOMETRY ONLY
+# ------------------------------------------------------------
+
+v_pa <- v_pa[,0]
+
+# ------------------------------------------------------------
+# ADD FIELD
+# ------------------------------------------------------------
+
+v_pa$PA <- 1
+
+# ------------------------------------------------------------
+# RASTERIZE TO NDVI GRID
+# ------------------------------------------------------------
+
+cat("\nCalculating proportional protected cover...\n")
+
+r_pa <- rasterize(
+  v_pa,
+  ndvi_template,
+  field = "PA",
+  background = 0,
+  cover = TRUE
+)
+
+names(r_pa) <- "PA_PROP"
+
+# ------------------------------------------------------------
+# SAVE
+# ------------------------------------------------------------
+
+out_file <- file.path(
+  out_dir,
+  "Natura2000_PA_PROP_300m.tif"
+)
+
+writeRaster(
+  r_pa,
+  out_file,
+  overwrite = TRUE
+)
+
+cat("\nSaved:\n")
+print(out_file)
+
+cat("\nNATURA2000 PROCESSING COMPLETED\n")
+
+
+############################################
+# SOLAR FARMS PROPORTIONAL COVER (300 m)
+############################################
+
+library(terra)
+
+# ------------------------------------------------------------
+# PATHS
+# ------------------------------------------------------------
+
+base_dir <- "E:/TFM_gangas/SolarFarms"
+
+osm_file <- file.path(
+  base_dir,
+  "fotovoltaica_osm_con_fechas_160725_clustered_clasificada_actualizada.gpkg"
+)
+
+allsolar_file <- file.path(
+  base_dir,
+  "allsolar_cut_diss.shp"
+)
+
+ndvi_template_file <- "E:/TFM_gangas/NDVI/SpainReprojected/300m/c_gls_NDVI300_201601010000_GLOBE_PROBAV_V1.0.1_25830_300m.tif"
+
+out_dir <- file.path(base_dir, "300m")
+
+dir.create(out_dir, showWarnings = FALSE)
+
+# ------------------------------------------------------------
+# LOAD NDVI TEMPLATE
+# ------------------------------------------------------------
+
+cat("\nLoading NDVI template...\n")
+
+ndvi_template <- rast(ndvi_template_file)
+
+# ------------------------------------------------------------
+# LOAD DATASETS
+# ------------------------------------------------------------
+
+cat("\nLoading OSM dataset...\n")
+
+v_osm <- vect(osm_file)
+
+cat("\nLoading ALLSOLAR dataset...\n")
+
+v_allsolar <- vect(allsolar_file)
+
+# ------------------------------------------------------------
+# REPROJECT
+# ------------------------------------------------------------
+
+cat("\nReprojecting datasets to EPSG:25830...\n")
+
+v_osm <- project(v_osm, "EPSG:25830")
+
+v_allsolar <- project(v_allsolar, "EPSG:25830")
+
+# ------------------------------------------------------------
+# KEEP GEOMETRY ONLY
+# ------------------------------------------------------------
+
+v_osm <- v_osm[,0]
+
+v_allsolar <- v_allsolar[,0]
+
+# ------------------------------------------------------------
+# MERGE DATASETS
+# ------------------------------------------------------------
+
+cat("\nMerging datasets...\n")
+
+v_solar <- rbind(v_osm, v_allsolar)
+
+rm(v_osm, v_allsolar)
+
+gc()
+
+# ------------------------------------------------------------
+# DISSOLVE OVERLAPS
+# ------------------------------------------------------------
+
+cat("\nDissolving overlaps...\n")
+
+v_solar$ID <- 1
+
+v_solar <- aggregate(v_solar, by = "ID")
+
+# ------------------------------------------------------------
+# RASTERIZE TO NDVI GRID
+# ------------------------------------------------------------
+
+cat("\nCalculating proportional PV cover...\n")
+
+r_solar <- rasterize(
+  v_solar,
+  ndvi_template,
+  field = "ID",
+  background = 0,
+  cover = TRUE
+)
+
+names(r_solar) <- "PV_PROP"
+
+# ------------------------------------------------------------
+# SAVE
+# ------------------------------------------------------------
+
+out_file <- file.path(
+  out_dir,
+  "SolarFarms_PV_PROP_300m.tif"
+)
+
+writeRaster(
+  r_solar,
+  out_file,
+  overwrite = TRUE
+)
+
+cat("\nSaved:\n")
+print(out_file)
+
+cat("\nSOLAR PROCESSING COMPLETED\n")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ###########################
 # SDM x NATURA2000
 ###########################
