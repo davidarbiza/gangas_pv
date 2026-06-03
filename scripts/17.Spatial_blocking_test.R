@@ -331,7 +331,7 @@ for (sp in species_list) {
           pred.grid = grid_df,
           train = train_sample,
           prob = TRUE,
-          which.class = 2
+          which.class = '1'
         )
         
         colnames(pd)[1] <- "value"
@@ -607,10 +607,6 @@ ggsave(
   height = 7,
   dpi = 300
 )
-
-
-
-
 
 
 
@@ -991,7 +987,7 @@ for(sp in species_list){
           pred.grid = grid_df,
           train = train_sample,
           prob = TRUE,
-          which.class = 2
+          which.class = '1'
         )
         
         colnames(pd)[1] <- "value"
@@ -1147,5 +1143,4 @@ ggsave(
 )
 
 cat("\nFINAL PDP FIGURES SAVED\n")
-
 

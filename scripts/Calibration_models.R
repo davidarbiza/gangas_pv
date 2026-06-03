@@ -974,15 +974,13 @@ for(met in methods){
     bg = "white"
   )
   
-  p_pts_fix <- (p_pts_max + p_pts_min) +
+  p_pts_fix <- (p_pts_max + p_pts_min) &
     
-    plot_annotation(
-      theme = theme(
-        plot.title = element_text(
-          size = 9,
-          face = "bold",
-          hjust = 0.5
-        )
+    theme(
+      plot.title = element_text(
+        size = 13,
+        face = "bold",
+        hjust = 0.5
       )
     )
   
@@ -996,15 +994,13 @@ for(met in methods){
     bg = "white"
   )
   
-  p_bbs_fix <- (p_bbs_max + p_bbs_min) +
+  p_bbs_fix <- (p_bbs_max + p_bbs_min) &
     
-    plot_annotation(
-      theme = theme(
-        plot.title = element_text(
-          size = 9,
-          face = "bold",
-          hjust = 0.5
-        )
+    theme(
+      plot.title = element_text(
+        size = 13,
+        face = "bold",
+        hjust = 0.5
       )
     )
   
@@ -1166,11 +1162,19 @@ for(met in methods){
       
       plot.title = element_text(
         face = "bold",
-        hjust = 0.5,
-        margin = margin(b = 8)
+        hjust = 0.56,
+        size = 20,
+        margin = margin(t = 14, b = 8)
       ),
       
-      legend.position = "right"
+      legend.position = "right",
+      
+      plot.margin = margin(
+        t = 10,
+        r = 35,
+        b = 10,
+        l = 10
+      )
     ) +
     
     labs(
@@ -1181,7 +1185,7 @@ for(met in methods){
     file.path(out_dir,
               paste0("Fig4_overlap_",met,".png")),
     p_overlap,
-    width = 6.4,
+    width = 7.4,
     height = 5,
     dpi = 300,
     bg = "white"
@@ -1193,14 +1197,3 @@ for(met in methods){
 }
 
 cat("\nFINAL RESULTS READY\n")
-
-
-
-
-
-
-
-
-
-
-
