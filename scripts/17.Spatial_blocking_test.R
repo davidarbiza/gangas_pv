@@ -1090,10 +1090,22 @@ make_pdp_plot <- function(
 # PTS
 # ------------------------------------------------------------
 
+pts_df <- pdp_summary %>%
+  filter(species == "PTS")
+
+pts_order <- top_vars %>%
+  filter(species == "PTS") %>%
+  arrange(desc(mean_imp)) %>%
+  pull(variable)
+
+pts_df$label <- factor(
+  pts_df$label,
+  levels = var_labels[pts_order]
+)
+
 p_pts <- make_pdp_plot(
   
-  pdp_summary %>%
-    filter(species == "PTS"),
+  pts_df,
   
   expression(
     "Partial dependence plots — " *
@@ -1118,10 +1130,22 @@ ggsave(
 # BBS
 # ------------------------------------------------------------
 
+bbs_df <- pdp_summary %>%
+  filter(species == "BBS")
+
+bbs_order <- top_vars %>%
+  filter(species == "BBS") %>%
+  arrange(desc(mean_imp)) %>%
+  pull(variable)
+
+bbs_df$label <- factor(
+  bbs_df$label,
+  levels = var_labels[bbs_order]
+)
+
 p_bbs <- make_pdp_plot(
   
-  pdp_summary %>%
-    filter(species == "BBS"),
+  bbs_df,
   
   expression(
     "Partial dependence plots — " *
@@ -1132,7 +1156,6 @@ p_bbs <- make_pdp_plot(
   
   "#FDB863"
 )
-
 ggsave(
   file.path(plot_dir_pdp,"PDP_FINAL_BBS.png"),
   p_bbs,
